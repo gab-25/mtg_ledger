@@ -8,8 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH="/opt/venv/bin:$PATH" \
-    DJANGO_DEBUG=false \
-    DJANGO_DB_PATH=/data/db.sqlite3
+    DJANGO_DEBUG=false
 
 WORKDIR /app
 
@@ -19,9 +18,8 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY . .
 RUN python manage.py collectstatic --noinput
 
-RUN useradd --system --create-home --uid 1000 app && mkdir -p /data && chown app /data
+RUN useradd --system --create-home --uid 1000 app
 USER app
-VOLUME ["/data"]
 EXPOSE 8000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
