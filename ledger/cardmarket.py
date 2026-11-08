@@ -5,13 +5,14 @@ collector number. Scryfall's bulk data gives both for each `cardmarket_id`, whic
 Ledger's cards (set + collector number).
 """
 
+import gzip
+import json
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
 import httpx
-import ijson
 
 from .catalog import normalize_number
 from .models import Card, CardmarketProduct, SyncLog
@@ -70,9 +71,10 @@ def _image(card):
 
 
 def _scryfall_printings(client):
-    """{cardmarket_id: (set code, collector number, image url)} from Scryfall default_cards, read in streaming."""
+    """{cardmarket_id: (set code, collector number, image url)} from Scryfall default_cards (gzipped JSON lines),
+    downloaded to a temporary file and read one card at a time."""
     bulk = _get_json(client, SCRYFALL_BULK_URL)
-    uri = next(d["download_uri"] for d in bulk["data"] if d["type"] == "default_cards")
+    uri = next(d["jsonl_download_uri"] for d in bulk["data"] if d["type"] == "default_cards")
     printings = {}
     with tempfile.TemporaryFile() as f:
         with client.stream("GET", uri) as response:
@@ -80,7 +82,13 @@ def _scryfall_printings(client):
             for chunk in response.iter_bytes():
                 f.write(chunk)
         f.seek(0)
-        for card in ijson.items(f, "item"):
+        compressed = f.read(2) == b"\x1f\x8b"  # already inflated when served with Content-Encoding: gzip
+        f.seek(0)
+        lines = gzip.open(f, "rt", encoding="utf-8") if compressed else (line.decode("utf-8") for line in f)
+        for line in lines:
+            if not line.strip():
+                continue
+            card = json.loads(line)
             cm_id = card.get("cardmarket_id")
             if cm_id is None or cm_id in printings:
                 continue
@@ -112,7 +120,7 @@ def _fetch(client):
                 prices_date=guide_date,
                 **{field: _money(row.get(key)) for key, field in PRICE_FIELDS.items()},
             ))
-    except (httpx.HTTPError, ValueError, KeyError, TypeError, StopIteration, ijson.JSONError) as exc:
+    except (httpx.HTTPError, OSError, EOFError, ValueError, KeyError, TypeError, StopIteration) as exc:
         raise CardmarketError(f"{type(exc).__name__}: {exc}") from exc
     priced = sum(1 for p in products if p["idProduct"] in prices)
     return objs, priced, guide_date

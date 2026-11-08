@@ -1,4 +1,5 @@
 import copy
+import gzip
 import json
 from decimal import Decimal
 
@@ -8,7 +9,7 @@ from django.test import TestCase
 from . import cardmarket
 from .models import Card, CardmarketProduct, SyncLog
 
-SCRYFALL_DOWNLOAD = "https://data.scryfall.io/default-cards/default-cards-20261108.json"
+SCRYFALL_DOWNLOAD = "https://data.scryfall.io/default-cards/default-cards-20261108100757.jsonl.gz"
 
 PRODUCTS = {
     "version": 1, "createdAt": "2026-11-08T13:01:01+0100",
@@ -50,6 +51,7 @@ class FakeSources:
         self.guide = copy.deepcopy(GUIDE)
         self.scryfall_cards = copy.deepcopy(SCRYFALL_CARDS)
         self.fail = set()  # source keys answering 500
+        self.content_encoding = False  # serve Scryfall with Content-Encoding: gzip (httpx inflates it)
         self.raw = {}  # source key -> raw body served instead of JSON
 
     def _serve(self, key, payload):
@@ -67,14 +69,16 @@ class FakeSources:
             return self._serve("guide", self.guide)
         if url == cardmarket.SCRYFALL_BULK_URL:
             return httpx.Response(200, json={"data": [
-                {"type": "oracle_cards", "download_uri": "https://data.scryfall.io/oracle.json"},
-                {"type": "default_cards", "download_uri": SCRYFALL_DOWNLOAD},
+                {"type": "oracle_cards", "jsonl_download_uri": "https://data.scryfall.io/oracle.jsonl.gz"},
+                {"type": "default_cards", "jsonl_download_uri": SCRYFALL_DOWNLOAD, "compressed_size": 1},
             ]})
         if url == SCRYFALL_DOWNLOAD:
             if "scryfall" in self.fail:
                 return httpx.Response(500, text="boom")
-            body = self.raw.get("scryfall") or json.dumps(self.scryfall_cards).encode()
-            return httpx.Response(200, content=body)
+            body = self.raw.get("scryfall") or "\n".join(json.dumps(c) for c in self.scryfall_cards).encode()
+            if self.content_encoding:
+                return httpx.Response(200, content=gzip.compress(body), headers={"Content-Encoding": "gzip"})
+            return httpx.Response(200, content=gzip.compress(body), headers={"Content-Type": "application/gzip"})
         return httpx.Response(404)
 
     def client(self):
@@ -123,6 +127,11 @@ class SyncTest(TestCase):
         self.assertEqual(ugin.prices_date.isoformat(), "2026-11-07T01:45:31+00:00")
         self.assertEqual(CardmarketProduct.objects.get(pk=900).image_url, "https://img/cs.jpg")
         self.assertEqual((result.products, result.priced), (3, 2))
+
+    def test_scryfall_served_with_content_encoding(self):
+        self.sources.content_encoding = True
+        cardmarket.sync(self.client_)
+        self.assertEqual(CardmarketProduct.objects.get(pk=466234).set_code, "m21")
 
     def test_unmatched_product_kept_name_only(self):
         cardmarket.sync(self.client_)
@@ -185,7 +194,7 @@ class SyncTest(TestCase):
         self.assertEqual(CardmarketProduct.objects.count(), 0)
 
     def test_malformed_scryfall_changes_nothing(self):
-        self.sources.raw["scryfall"] = b'[{"cardmarket_id": 1, '
+        self.sources.raw["scryfall"] = b'{"cardmarket_id": 466234}\n{"cardmarket_id": 1, '
         self.assertIsNone(cardmarket.run_sync(self.client_))
         self.assertEqual(CardmarketProduct.objects.count(), 0)
 
