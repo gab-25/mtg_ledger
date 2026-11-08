@@ -54,19 +54,40 @@
   </form>
 </div>
 
-<section class="section" aria-labelledby="connections-title">
+<section class="section" id="cardtrader" aria-labelledby="connections-title">
   <h2 id="connections-title">Connected services</h2>
-  <div class="connection connection-row">
-    <div>
-      <div class="profile-name" style="font-size:20px">{{ cardtrader.name }}</div>
-      <div class="sub">{% if cardtrader.last_sync %}Last sync {{ cardtrader.last_sync|naturaltime }}{% else %}Never synced{% endif %}</div>
+  <div class="box">
+    <div class="connection-head">
+      <div>
+        <div class="profile-name" style="font-size:22px">{{ cardtrader.name }}</div>
+        <div class="sub">Publishes your listings, imports orders and market prices. {% if cardtrader.last_sync %}Last sync {{ cardtrader.last_sync|naturaltime }}.{% else %}Never synced.{% endif %}</div>
+      </div>
+      {% if token_saved or token_from_env %}
+      <span class="badge badge-ok"><span class="pill-dot"></span>Connected</span>
+      {% else %}
+      <span class="badge badge-pending"><span class="pill-dot"></span>Not connected</span>
+      {% endif %}
     </div>
-    {% if cardtrader_token %}
-    <span class="badge badge-ok"><span class="pill-dot"></span>API token configured</span>
-    {% else %}
-    <span class="badge badge-pending"><span class="pill-dot"></span>API token missing</span>
+
+    {% if token_from_env %}
+    <p class="hint" style="margin:0">Using the token from the <code>CARDTRADER_API_TOKEN</code> environment variable. A token saved here takes precedence.</p>
     {% endif %}
-    <a class="btn" href="{% url 'ledger:service_settings' cardtrader.pk %}">Manage connection</a>
+
+    <form method="post" action="{% url 'accounts:profile' %}#cardtrader" class="inline-form" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="cardtrader">
+      {% include "theme/includes/field.html" with field=token_form.token %}
+      <button type="submit" class="btn btn-primary">{% if token_saved %}Replace token{% else %}Connect{% endif %}</button>
+    </form>
+
+    {% if token_saved %}
+    <form method="post" action="{% url 'accounts:profile' %}#cardtrader" class="connection-row" style="padding:0">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="cardtrader_remove">
+      <span class="hint" style="flex:1">A token is saved. It is never shown again; replace it or remove it.</span>
+      <button type="submit" class="btn btn-danger" onclick="return confirm('Disconnect CardTrader? Publishing and syncing will stop until a new token is added.')">Remove token</button>
+    </form>
+    {% endif %}
   </div>
 </section>
 

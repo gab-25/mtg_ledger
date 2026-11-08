@@ -5,7 +5,7 @@ MTG Ledger — Magic: The Gathering collection and CardTrader sales manager (Dja
 
 - `config/` — Django project (settings, root URLs)
 - `theme/` — look and feel: `base.html` layout with sidebar, `static/theme/app.css` (design tokens + components), shared includes, login/account templates
-- `accounts/` — profile page: personal details, password change, connected services
+- `accounts/` — profile page: personal details, password change, CardTrader connection (API token)
 - `ledger/` — domain: cards, collection, sale listings, shipments, CardTrader client and sync, CSV import/export
 
 ## Getting started
@@ -22,7 +22,7 @@ Tests: `uv run python manage.py test`
 
 ## CardTrader
 
-Set the API token (CardTrader profile → settings) in **Sync → Settings**, or export `CARDTRADER_API_TOKEN`.
+Connect CardTrader from **Profile and settings → Connected services** (the token is checked with CardTrader before it is saved, and never shown again), or export `CARDTRADER_API_TOKEN`.
 
 - **Publish**: listings "To publish" are created/updated on CardTrader with the bulk API. Cards are matched to the
   CardTrader catalog (blueprint) by set code + name the first time; unmatched cards stay pending with a warning.

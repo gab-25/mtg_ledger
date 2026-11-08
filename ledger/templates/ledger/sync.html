@@ -30,7 +30,7 @@
       <div><dt>Last sync</dt><dd class="mono">{% if s.last_sync %}{{ s.last_sync|naturalday|capfirst }}, {{ s.last_sync|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
       <div><dt>Direction</dt><dd>{{ s.direction|default:"—" }}</dd></div>
       <div><dt>Orders imported</dt><dd class="mono">{% if s.orders_synced_at %}{{ s.orders_synced_at|naturalday|capfirst }}, {{ s.orders_synced_at|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
-      <div><dt>API token</dt><dd>{% if s.token_ok %}Configured{% else %}<a href="{% url 'ledger:service_settings' s.pk %}">Not configured</a>{% endif %}</dd></div>
+      <div><dt>API token</dt><dd>{% if s.token_ok %}Configured{% else %}<a href="{% url 'accounts:profile' %}#cardtrader">Not configured</a>{% endif %}</dd></div>
     </dl>
     <div class="actions" style="gap:10px">
       <form method="post" action="{% url 'ledger:publish' %}">
@@ -38,7 +38,7 @@
         <input type="hidden" name="next" value="{% url 'ledger:sync' %}">
         <button type="submit" class="btn btn-raised"{% if not pending_changes %} disabled{% endif %}>Publish changes</button>
       </form>
-      <a class="btn btn-ghost" href="{% url 'ledger:service_settings' s.pk %}">Settings</a>
+      <a class="btn btn-ghost" href="{% url 'accounts:profile' %}#cardtrader">Settings</a>
     </div>
   </article>
   {% endfor %}

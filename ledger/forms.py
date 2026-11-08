@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Card, CollectionItem, Color, Listing, SyncService
+from .models import Card, CollectionItem, Color, Listing
 
 
 class CardItemForm(forms.ModelForm):
@@ -65,20 +65,6 @@ class ListingForm(forms.ModelForm):
 class CsvImportForm(forms.Form):
     file = forms.FileField(label="CSV file")
 
-
-class SyncServiceForm(forms.ModelForm):
-    class Meta:
-        model = SyncService
-        fields = ["description", "direction", "api_token"]
-        widgets = {"api_token": forms.PasswordInput(render_value=False)}
-        help_texts = {
-            "api_token": "From your CardTrader profile settings. Leave empty to keep the current one "
-            "(or set CARDTRADER_API_TOKEN in the environment).",
-        }
-
-    def clean_api_token(self):
-        token = self.cleaned_data["api_token"].strip()
-        return token or self.instance.api_token
 
 
 class ShipForm(forms.Form):

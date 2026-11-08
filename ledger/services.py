@@ -53,9 +53,28 @@ def api_token(service=None):
     return service.api_token or getattr(settings, "CARDTRADER_API_TOKEN", "")
 
 
-def make_client(service=None):
+def make_client(service=None, token=None):
     """Build the API client. Tests patch this to inject a mock transport."""
-    return CardTraderClient(api_token(service))
+    return CardTraderClient(token or api_token(service))
+
+
+def set_api_token(token):
+    """Check the token against CardTrader (/info), then store it. Returns the app info."""
+    token = token.strip()
+    with make_client(token=token) as client:
+        info = client.info() or {}
+    service = get_cardtrader()
+    service.api_token = token
+    service.save(update_fields=["api_token"])
+    _log(f"{CARDTRADER}: API token connected" + (f" (app {info['name']})" if info.get("name") else ""))
+    return info
+
+
+def remove_api_token():
+    service = get_cardtrader()
+    service.api_token = ""
+    service.save(update_fields=["api_token"])
+    _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING)
 
 
 def _log(message, level=SyncLog.Level.OK):

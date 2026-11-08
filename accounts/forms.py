@@ -14,3 +14,11 @@ class ProfileForm(forms.ModelForm):
             if taken.exists():
                 raise forms.ValidationError("This email is already used by another account.")
         return email
+
+
+class CardTraderTokenForm(forms.Form):
+    token = forms.CharField(
+        label="CardTrader API token",
+        widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "off"}),
+        help_text="Found in your CardTrader profile settings, under API. It is checked with CardTrader before saving.",
+    )

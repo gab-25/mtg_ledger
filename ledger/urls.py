@@ -23,5 +23,4 @@ urlpatterns = [
     path("sync/", views.sync, name="sync"),
     path("sync/all/", views.sync_all, name="sync_all"),
     path("sync/conflicts/<int:pk>/resolve/", views.resolve, name="resolve"),
-    path("sync/services/<int:pk>/", views.service_settings, name="service_settings"),
 ]

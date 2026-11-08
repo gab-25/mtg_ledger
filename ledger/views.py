@@ -10,7 +10,7 @@ from django.views.decorators.http import require_POST
 
 from . import services
 from .cardtrader import CardTraderError
-from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm, SyncServiceForm
+from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm
 from .models import Card, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
 from .presentation import COLOR_FILTERS, ORDER_TABS, item_badge, listing_badge, order_badge, pip
 
@@ -290,16 +290,6 @@ def resolve(request, pk):
         messages.success(request, f"Conflict on {conflict.item.card.name} resolved.")
     return redirect("ledger:sync")
 
-
-@login_required
-def service_settings(request, pk):
-    service = get_object_or_404(SyncService, pk=pk)
-    form = SyncServiceForm(request.POST or None, instance=service)
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, f"{service.name} settings saved.")
-        return redirect("ledger:sync")
-    return render(request, "ledger/service_form.html", {"nav": "sync", "form": form, "service": service})
 
 
 # --- Shipments -----------------------------------------------------------
