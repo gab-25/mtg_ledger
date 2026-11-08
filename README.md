@@ -38,6 +38,7 @@ Run the whole stack (PostgreSQL + app built from the local `Dockerfile`) with Do
 
 ```bash
 docker compose up -d --build
+docker compose exec mtg_ledger python manage.py migrate
 docker compose exec mtg_ledger python manage.py createsuperuser
 ```
 
@@ -57,9 +58,9 @@ docker run -p 8000:8000 \
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
 reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
-`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`), `RUN_MIGRATIONS`.
-Migrations run at container start (`docker-entrypoint.sh`) before any command, unless `RUN_MIGRATIONS=false`
-(set it on the worker and on one-off containers, so only the web app migrates).
+`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`).
+Migrations never run on their own at container start: run `python manage.py migrate` yourself after each upgrade
+(e.g. `docker compose exec mtg_ledger python manage.py migrate`, or a one-off container of the image with that command).
 
 ## CardTrader
 

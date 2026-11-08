@@ -39,7 +39,6 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-local-compose-key}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
       CELERY_BROKER_URL: redis://redis:6379/0
-      RUN_MIGRATIONS: "false"
     depends_on:
       db:
         condition: service_healthy
