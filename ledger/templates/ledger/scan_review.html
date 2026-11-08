@@ -7,11 +7,11 @@
     <h1>{{ copies }} card{{ copies|pluralize }} to save</h1>
     <div class="sub">{{ unique }} unique · duplicates already merged</div>
   </div>
-  <div class="actions"><a class="btn" href="{% url 'ledger:scan_camera' session.pk %}">Continue scanning</a></div>
+  <div class="actions"><a class="btn" href="{% url 'ledger:scan_camera' session.uuid %}">Continue scanning</a></div>
 </header>
 
 {% if pending %}
-<a class="scan-warn" href="{% url 'ledger:scan_resolve' pending.0.pk %}?next={{ request.path|urlencode }}">
+<a class="scan-warn" href="{% url 'ledger:scan_resolve' pending.0.uuid %}?next={{ request.path|urlencode }}">
   {{ pending|length }} card{{ pending|length|pluralize }} to confirm — saving is blocked until they are resolved or removed
 </a>
 {% endif %}
@@ -32,7 +32,7 @@
       <span class="mono sub">{{ line.blueprint.expansion.code|upper }} {{ line.blueprint.collector_number }} · {{ line.condition }} · {{ line.language }}{% if line.foil %} · <span class="foil-tag">Foil</span>{% endif %}</span>
       <span class="scan-line-meta">
         <span class="mono">{% if line.price is not None %}€ {{ line.price }}{% else %}no price{% endif %}</span>
-        <form method="post" action="{% url 'ledger:scan_line_update' line.pk %}">
+        <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">
           {% csrf_token %}
           <input type="hidden" name="for_sale" value="{% if line.listed %}0{% else %}1{% endif %}">
           <button type="submit" class="badge {% if line.listed %}badge-gold{% else %}badge-neutral{% endif %}" aria-pressed="{% if line.listed %}true{% else %}false{% endif %}"{% if line.price is None %} disabled title="No market price: cannot be listed"{% endif %}>{% if line.listed %}For sale{% else %}Collection only{% endif %}</button>
@@ -40,7 +40,7 @@
       </span>
       <details class="scan-edit">
         <summary>Edit</summary>
-        <form method="post" action="{% url 'ledger:scan_line_update' line.pk %}" class="scan-row">
+        <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}" class="scan-row">
           {% csrf_token %}
           <select name="condition" class="input" aria-label="Condition">{% for code, label in conditions %}<option value="{{ code }}"{% if line.condition == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select>
           <select name="language" class="input" aria-label="Language">{% for code, label in languages %}<option value="{{ code }}"{% if line.language == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select>
@@ -50,9 +50,9 @@
       </details>
     </div>
     <div class="stepper">
-      <form method="post" action="{% url 'ledger:scan_line_update' line.pk %}">{% csrf_token %}<input type="hidden" name="undo" value="1"><button type="submit" class="btn btn-sm" aria-label="Remove one copy of {{ line.blueprint.name }}">−</button></form>
+      <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">{% csrf_token %}<input type="hidden" name="undo" value="1"><button type="submit" class="btn btn-sm" aria-label="Remove one copy of {{ line.blueprint.name }}">−</button></form>
       <span class="mono">{{ line.quantity }}</span>
-      <form method="post" action="{% url 'ledger:scan_line_update' line.pk %}">{% csrf_token %}<input type="hidden" name="quantity" value="{{ line.quantity|add:1 }}"><button type="submit" class="btn btn-sm" aria-label="Add one copy of {{ line.blueprint.name }}">+</button></form>
+      <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">{% csrf_token %}<input type="hidden" name="quantity" value="{{ line.quantity|add:1 }}"><button type="submit" class="btn btn-sm" aria-label="Add one copy of {{ line.blueprint.name }}">+</button></form>
     </div>
   </div>
   {% empty %}
@@ -60,19 +60,19 @@
   {% endfor %}
   {% for line in pending %}
   <div class="scan-line scan-line-pending">
-    {% if line.frame %}<img src="{% url 'ledger:scan_frame' line.pk %}" alt="">{% else %}<span class="scan-thumb" aria-hidden="true"></span>{% endif %}
+    {% if line.frame %}<img src="{% url 'ledger:scan_frame' line.uuid %}" alt="">{% else %}<span class="scan-thumb" aria-hidden="true"></span>{% endif %}
     <div class="scan-line-text">
       <span class="scan-option-name">Unconfirmed card</span>
-      <a href="{% url 'ledger:scan_resolve' line.pk %}?next={{ request.path|urlencode }}">Confirm</a>
+      <a href="{% url 'ledger:scan_resolve' line.uuid %}?next={{ request.path|urlencode }}">Confirm</a>
     </div>
-    <form method="post" action="{% url 'ledger:scan_line_update' line.pk %}">{% csrf_token %}<input type="hidden" name="quantity" value="0"><button type="submit" class="btn btn-sm btn-danger">Remove</button></form>
+    <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">{% csrf_token %}<input type="hidden" name="quantity" value="0"><button type="submit" class="btn btn-sm btn-danger">Remove</button></form>
   </div>
   {% endfor %}
 </div>
 
 <form method="post" class="scan-save">
   {% csrf_token %}
-  <a class="btn" href="{% url 'ledger:scan_camera' session.pk %}">Continue</a>
+  <a class="btn" href="{% url 'ledger:scan_camera' session.uuid %}">Continue</a>
   <button type="submit" name="save" value="1" class="btn btn-primary"{% if pending or not lines %} disabled{% endif %}>Save {{ copies }}{% if listed %} · list {{ listed }}{% endif %}</button>
 </form>
 {% endblock %}

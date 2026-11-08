@@ -10,7 +10,7 @@
 </header>
 
 {% if line and line.frame %}
-<img class="scan-frame" src="{% url 'ledger:scan_frame' line.pk %}" alt="Captured photo of the card">
+<img class="scan-frame" src="{% url 'ledger:scan_frame' line.uuid %}" alt="Captured photo of the card">
 {% endif %}
 
 <form method="get" class="search" role="search">

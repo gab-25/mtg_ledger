@@ -30,7 +30,7 @@ class FakeRecognizer:
         return self.result
 
 
-class ScanViewsTest(LedgerTestCase):
+class ScanViewsBase(LedgerTestCase):
     def setUp(self):
         super().setUp()
         api = self.ct.client()
@@ -58,9 +58,11 @@ class ScanViewsTest(LedgerTestCase):
 
     def capture(self, session, capture_id="c1"):
         frame = SimpleUploadedFile("f.jpg", b"\xff\xd8jpeg", content_type="image/jpeg")
-        return self.client.post(reverse("ledger:scan_capture", args=[session.pk]),
+        return self.client.post(reverse("ledger:scan_capture", args=[session.uuid]),
                                 {"frame": frame, "capture_id": capture_id})
 
+
+class ScanViewsTest(ScanViewsBase):
     def test_start_page_lists_expansions(self):
         resp = self.client.get(reverse("ledger:scan_start"))
         self.assertContains(resp, "All expansions")
@@ -69,14 +71,14 @@ class ScanViewsTest(LedgerTestCase):
     def test_start_with_expansion_preloads_catalog_and_prices(self):
         resp = self.client.post(reverse("ledger:scan_start"), {"expansion": self.dmr.pk, "condition": "EX"})
         session = ScanSession.objects.latest("created_at")
-        self.assertRedirects(resp, reverse("ledger:scan_camera", args=[session.pk]))
+        self.assertRedirects(resp, reverse("ledger:scan_camera", args=[session.uuid]))
         self.assertEqual((session.expansion, session.default_condition), (self.dmr, "EX"))
         self.assertTrue(MarketPrice.objects.filter(blueprint_ct_id=1201).exists())
 
     def test_camera_page_renders(self):
         session = self.start()
-        resp = self.client.get(reverse("ledger:scan_camera", args=[session.pk]))
-        self.assertContains(resp, reverse("ledger:scan_capture", args=[session.pk]))
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]))
+        self.assertContains(resp, reverse("ledger:scan_capture", args=[session.uuid]))
         self.assertContains(resp, "ledger/scan.js")
 
     def test_capture_returns_toast_fragment(self):
@@ -107,14 +109,14 @@ class ScanViewsTest(LedgerTestCase):
         resp = self.capture(session)
         line = ScanLine.objects.get(session=session)
         self.assertTrue(line.needs_confirmation)
-        self.assertIn(reverse("ledger:scan_resolve", args=[line.pk]), resp["X-Scan-Redirect"])
+        self.assertIn(reverse("ledger:scan_resolve", args=[line.uuid]), resp["X-Scan-Redirect"])
         page = self.client.get(resp["X-Scan-Redirect"])
         self.assertContains(page, "Which one is it?")
         self.assertContains(page, "Counterspell")
-        frame = self.client.get(reverse("ledger:scan_frame", args=[line.pk]))
+        frame = self.client.get(reverse("ledger:scan_frame", args=[line.uuid]))
         self.assertEqual(frame["Content-Type"], "image/jpeg")
-        camera = reverse("ledger:scan_camera", args=[session.pk])
-        resp = self.client.post(reverse("ledger:scan_resolve", args=[line.pk]),
+        camera = reverse("ledger:scan_camera", args=[session.uuid])
+        resp = self.client.post(reverse("ledger:scan_resolve", args=[line.uuid]),
                                 {"blueprint": 1201, "language": "IT", "next": camera})
         self.assertRedirects(resp, camera)
         line = ScanLine.objects.get(session=session)
@@ -122,7 +124,7 @@ class ScanViewsTest(LedgerTestCase):
 
     def test_manual_search_adds_line(self):
         session = self.start()
-        url = reverse("ledger:scan_search", args=[session.pk])
+        url = reverse("ledger:scan_search", args=[session.uuid])
         self.assertContains(self.client.get(url, {"q": "counter"}), "Counterspell")
         self.client.post(url, {"blueprint": 1201, "language": "EN"})
         self.assertEqual(ScanLine.objects.get(session=session).quantity, 1)
@@ -131,8 +133,8 @@ class ScanViewsTest(LedgerTestCase):
         session = self.start()
         self.capture(session)
         line = ScanLine.objects.get(session=session)
-        camera = reverse("ledger:scan_camera", args=[session.pk])
-        url = reverse("ledger:scan_line_update", args=[line.pk])
+        camera = reverse("ledger:scan_camera", args=[session.uuid])
+        url = reverse("ledger:scan_line_update", args=[line.uuid])
         page = self.client.get(camera)
         self.assertContains(page, f'action="{url}"')
         self.assertRedirects(self.client.post(url, {"foil": "1", "next": camera}), camera)
@@ -143,7 +145,7 @@ class ScanViewsTest(LedgerTestCase):
     def test_review_threshold_and_save(self):
         session = self.start()
         self.capture(session)
-        review = reverse("ledger:scan_review", args=[session.pk])
+        review = reverse("ledger:scan_review", args=[session.uuid])
         self.client.post(review, {"threshold": "3.00"})
         session.refresh_from_db()
         self.assertEqual(session.sale_threshold, Decimal("3.00"))
@@ -159,21 +161,21 @@ class ScanViewsTest(LedgerTestCase):
         session = self.start()
         self.recognizer.result = Recognition(name="Counterspell", language="")
         self.capture(session)
-        resp = self.client.post(reverse("ledger:scan_review", args=[session.pk]), {"save": "1"}, follow=True)
+        resp = self.client.post(reverse("ledger:scan_review", args=[session.uuid]), {"save": "1"}, follow=True)
         self.assertContains(resp, "Some cards still need confirmation.")
 
     def test_saved_session_redirects(self):
         session = self.start()
         session.status = ScanSession.Status.SAVED
         session.save()
-        resp = self.client.get(reverse("ledger:scan_camera", args=[session.pk]))
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]))
         self.assertRedirects(resp, reverse("ledger:collection"))
 
     def test_collection_links_to_scan(self):
         self.assertContains(self.client.get(reverse("ledger:collection")), reverse("ledger:scan_start"))
 
 
-class ReviewFixesViewsTest(ScanViewsTest):
+class ReviewFixesViewsTest(ScanViewsBase):
     def test_retry_after_merge_adds_once(self):  # C1
         session = self.start()
         self.capture(session, "a")
@@ -201,7 +203,7 @@ class ReviewFixesViewsTest(ScanViewsTest):
 
     def test_search_other_expansion_loads_it(self):  # I2 / I3
         session = self.start()  # DMR locked
-        url = reverse("ledger:scan_search", args=[session.pk])
+        url = reverse("ledger:scan_search", args=[session.uuid])
         resp = self.client.get(url, {"q": "sheoldred", "set": "dmu"})
         self.assertContains(resp, "Sheoldred, the Apocalypse")
 
@@ -226,3 +228,15 @@ class PhoneQrTest(LedgerTestCase):
         resp = self.client.get(reverse("ledger:scan_start"))
         self.assertContains(resp, "http://testserver/scan/")
         self.assertContains(resp, "needs HTTPS")
+
+
+class ScanUuidTest(ScanViewsBase):
+    def test_scan_urls_use_uuids_not_ids(self):
+        session = self.start()
+        self.capture(session)
+        line = ScanLine.objects.get(session=session)
+        camera = reverse("ledger:scan_camera", args=[session.uuid])
+        self.assertIn(str(session.uuid), camera)
+        self.assertIn(str(line.uuid), reverse("ledger:scan_line_update", args=[line.uuid]))
+        self.assertEqual(self.client.get(f"/scan/{session.pk}/").status_code, 404)
+        self.assertContains(self.client.get(camera), str(line.uuid))

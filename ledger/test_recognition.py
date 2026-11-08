@@ -6,7 +6,7 @@ from .tests import LedgerTestCase
 FABLE = "Fable of the Mirror-Breaker"
 
 
-class MatchTest(LedgerTestCase):
+class MatchBase(LedgerTestCase):
     def setUp(self):
         super().setUp()
         self.api = self.ct.client()
@@ -14,6 +14,8 @@ class MatchTest(LedgerTestCase):
         self.neo = Expansion.objects.get(code="neo")
         catalog.ensure_blueprints(self.api, self.neo)
 
+
+class MatchTest(MatchBase):
     def test_number_in_locked_expansion(self):
         m = match(self.api, Recognition(name=FABLE, collector_number="0356", language="IT"), self.neo)
         self.assertEqual((m.reason, m.blueprint.ct_id), ("ok", 1101))
@@ -51,7 +53,7 @@ class MatchTest(LedgerTestCase):
         self.assertEqual([b.ct_id for b in m.candidates], [1101])
 
 
-class MatchReviewFixesTest(MatchTest):
+class MatchReviewFixesTest(MatchBase):
     def test_locked_expansion_follows_other_printed_set(self):  # I2
         rec = Recognition(name="Counterspell", set_code="dmr", collector_number="45", language="EN")
         m = match(self.api, rec, self.neo)

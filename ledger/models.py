@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal
 
 from django.db import models
@@ -338,6 +339,7 @@ class ScanSession(models.Model):
         OPEN = "open", "Open"
         SAVED = "saved", "Saved"
 
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     expansion = models.ForeignKey(Expansion, null=True, blank=True, on_delete=models.SET_NULL)
     default_condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
     sale_threshold = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -355,6 +357,7 @@ class ScanSession(models.Model):
 class ScanLine(models.Model):
     """One draft row of a scan session: copies of a printing with the same language/foil/condition."""
 
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     session = models.ForeignKey(ScanSession, on_delete=models.CASCADE, related_name="lines")
     blueprint = models.ForeignKey(Blueprint, null=True, blank=True, on_delete=models.PROTECT)
     language = models.CharField(max_length=3, choices=Language.choices, blank=True)

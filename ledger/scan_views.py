@@ -21,8 +21,8 @@ MAX_FRAME_BYTES = 2 * 1024 * 1024
 SEARCH_LIMIT = 20
 
 
-def _open_session(pk):
-    session = get_object_or_404(ScanSession.objects.select_related("expansion"), pk=pk)
+def _open_session(uid):
+    session = get_object_or_404(ScanSession.objects.select_related("expansion"), uuid=uid)
     return session if session.status == ScanSession.Status.OPEN else None
 
 
@@ -90,7 +90,7 @@ def scan_start(request):
                     pricing.fill_expansion(client, expansion, my_id)
             except CardTraderError as exc:
                 messages.warning(request, f"Could not preload {expansion} from CardTrader: {exc}")
-        return redirect("ledger:scan_camera", session.pk)
+        return redirect("ledger:scan_camera", session.uuid)
 
     if not Expansion.objects.exists():
         try:
@@ -113,8 +113,8 @@ def scan_start(request):
 
 
 @login_required
-def scan_camera(request, pk):
-    session = _open_session(pk)
+def scan_camera(request, uid):
+    session = _open_session(uid)
     if session is None:
         return redirect("ledger:collection")
     return render(request, "ledger/scan_camera.html", {
@@ -136,8 +136,8 @@ def _toast(request, session, *, line=None, state="", error=False, status=200):
 
 @login_required
 @require_POST
-def scan_capture(request, pk):
-    session = _open_session(pk)
+def scan_capture(request, uid):
+    session = _open_session(uid)
     if session is None:
         resp = HttpResponse(status=204)
         resp["X-Scan-Redirect"] = reverse("ledger:collection")
@@ -171,9 +171,9 @@ def scan_capture(request, pk):
             raise
 
     if done.needs_confirmation:
-        camera = reverse("ledger:scan_camera", args=[session.pk])
+        camera = reverse("ledger:scan_camera", args=[session.uuid])
         resp = HttpResponse(status=204)
-        resp["X-Scan-Redirect"] = f"{reverse('ledger:scan_resolve', args=[done.pk])}?next={camera}"
+        resp["X-Scan-Redirect"] = f"{reverse('ledger:scan_resolve', args=[done.uuid])}?next={camera}"
         return resp
     copies = "copy" if done.quantity == 1 else "copies"
     return _toast(request, session, line=done, state=f"Added · {done.quantity} {copies}")
@@ -181,8 +181,8 @@ def scan_capture(request, pk):
 
 @login_required
 @require_POST
-def scan_line_update(request, pk):
-    line = get_object_or_404(ScanLine.objects.select_related("session"), pk=pk)
+def scan_line_update(request, uid):
+    line = get_object_or_404(ScanLine.objects.select_related("session"), uuid=uid)
     session = line.session
     if session.status != ScanSession.Status.OPEN:
         return redirect("ledger:collection")
@@ -203,12 +203,12 @@ def scan_line_update(request, pk):
         if "for_sale" in post:
             changes["for_sale"] = {"1": True, "0": False}.get(post["for_sale"])
         line = scan.update_line(line, **changes)
-    return redirect(_next(request, reverse("ledger:scan_review", args=[session.pk])))
+    return redirect(_next(request, reverse("ledger:scan_review", args=[session.uuid])))
 
 
 @login_required
-def scan_frame(request, pk):
-    line = get_object_or_404(ScanLine, pk=pk)
+def scan_frame(request, uid):
+    line = get_object_or_404(ScanLine, uuid=uid)
     if not line.frame:
         raise Http404
     return HttpResponse(bytes(line.frame), content_type="image/jpeg")
@@ -227,12 +227,12 @@ def _pick(request, session):
 
 
 @login_required
-def scan_resolve(request, pk):
-    line = get_object_or_404(ScanLine.objects.select_related("session__expansion"), pk=pk)
+def scan_resolve(request, uid):
+    line = get_object_or_404(ScanLine.objects.select_related("session__expansion"), uuid=uid)
     session = line.session
     if session.status != ScanSession.Status.OPEN:
         return redirect("ledger:collection")
-    back = _next(request, reverse("ledger:scan_camera", args=[session.pk]))
+    back = _next(request, reverse("ledger:scan_camera", args=[session.uuid]))
     if not line.needs_confirmation:
         return redirect(back)
     error = None
@@ -261,11 +261,11 @@ def scan_resolve(request, pk):
 
 
 @login_required
-def scan_search(request, pk):
-    session = _open_session(pk)
+def scan_search(request, uid):
+    session = _open_session(uid)
     if session is None:
         return redirect("ledger:collection")
-    camera = reverse("ledger:scan_camera", args=[session.pk])
+    camera = reverse("ledger:scan_camera", args=[session.uuid])
     error = None
     if request.method == "POST":
         picked = _pick(request, session)
@@ -290,11 +290,11 @@ def scan_search(request, pk):
 
 
 @login_required
-def scan_review(request, pk):
-    session = _open_session(pk)
+def scan_review(request, uid):
+    session = _open_session(uid)
     if session is None:
         return redirect("ledger:collection")
-    review = reverse("ledger:scan_review", args=[session.pk])
+    review = reverse("ledger:scan_review", args=[session.uuid])
     if request.method == "POST":
         if "save" in request.POST:
             try:
