@@ -22,6 +22,8 @@ from .cardtrader import (
     CardTraderError,
     money,
 )
+from .catalog import normalize_number
+from .forms import get_or_create_card
 from .models import (
     Card,
     CollectionItem,
@@ -36,7 +38,7 @@ from .models import (
     SyncService,
 )
 
-CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price"]
+CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price", "number"]
 CARDTRADER = "CardTrader"
 
 
@@ -97,6 +99,7 @@ def export_csv(items, stream):
             "1" if item.foil else "0",
             item.quantity,
             f"{item.price:.2f}",
+            item.card.collector_number,
         ])
 
 
@@ -140,13 +143,12 @@ def import_csv(uploaded_file):
             if quantity < 0 or price < 0:
                 raise CsvImportError(f"Line {line}: quantity and price must be positive")
 
-            card, _ = Card.objects.get_or_create(
-                name=row["name"],
-                set_code=row["set"].upper(),
-                defaults={
-                    "type_line": row.get("type", ""),
-                    "color": _choice(row.get("color"), Color, Color.COLORLESS, "color", line),
-                },
+            card = get_or_create_card(
+                row["name"],
+                row["set"].upper(),
+                normalize_number(row.get("number", "")),
+                type_line=row.get("type", ""),
+                color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
                 card=card,

@@ -5,7 +5,7 @@ from .models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflic
 
 @admin.register(Card)
 class CardAdmin(admin.ModelAdmin):
-    list_display = ["name", "set_code", "type_line", "color", "ct_blueprint_id"]
+    list_display = ["name", "set_code", "collector_number", "type_line", "color", "ct_blueprint_id"]
     list_filter = ["color", "set_code"]
     search_fields = ["name", "type_line"]
 

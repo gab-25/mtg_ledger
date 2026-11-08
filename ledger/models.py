@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import models
+from django.db.models import Q
 
 
 class Color(models.TextChoices):
@@ -42,6 +43,7 @@ class Card(models.Model):
     name = models.CharField(max_length=200)
     type_line = models.CharField(max_length=200, blank=True)
     set_code = models.CharField(max_length=10)
+    collector_number = models.CharField(max_length=12, blank=True, default="")
     color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
@@ -50,10 +52,21 @@ class Card(models.Model):
     class Meta:
         ordering = ["name", "set_code"]
         constraints = [
-            models.UniqueConstraint(fields=["name", "set_code"], name="unique_card_printing"),
+            models.UniqueConstraint(
+                fields=["set_code", "collector_number"], condition=~Q(collector_number=""),
+                name="unique_card_set_number",
+            ),
+            models.UniqueConstraint(
+                fields=["name", "set_code"], condition=Q(collector_number=""), name="unique_card_legacy_name_set",
+            ),
+            models.UniqueConstraint(
+                fields=["ct_blueprint_id"], condition=Q(ct_blueprint_id__isnull=False), name="unique_card_blueprint",
+            ),
         ]
 
     def __str__(self):
+        if self.collector_number:
+            return f"{self.name} ({self.set_code} #{self.collector_number})"
         return f"{self.name} ({self.set_code})"
 
 
