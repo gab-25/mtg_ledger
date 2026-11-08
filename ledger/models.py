@@ -274,3 +274,37 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity}× {self.name}"
+
+
+class Expansion(models.Model):
+    """A CardTrader MTG expansion (local catalog copy)."""
+
+    ct_id = models.PositiveIntegerField("CardTrader expansion", unique=True)
+    code = models.CharField(max_length=10, db_index=True)
+    name = models.CharField(max_length=200)
+    blueprints_synced_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.code.upper()} · {self.name}"
+
+
+class Blueprint(models.Model):
+    """A CardTrader blueprint: one printing of a card (local catalog copy)."""
+
+    ct_id = models.PositiveIntegerField("CardTrader blueprint", unique=True)
+    expansion = models.ForeignKey(Expansion, on_delete=models.CASCADE, related_name="blueprints")
+    name = models.CharField(max_length=200, db_index=True)
+    collector_number = models.CharField(max_length=12, blank=True)
+    version = models.CharField(max_length=80, blank=True)
+    rarity = models.CharField(max_length=40, blank=True)
+    image_url = models.URLField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["expansion__name", "name"]
+
+    def __str__(self):
+        number = f" #{self.collector_number}" if self.collector_number else ""
+        return f"{self.name} ({self.expansion.code.upper()}{number})"

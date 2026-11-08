@@ -56,3 +56,56 @@ def merge_cards(source, target):
             item.delete()
         source.delete()
     return True
+
+
+def _blueprint_fields(bp):
+    """Map a /blueprints/export entry to Blueprint fields (shape to re-check against the live API)."""
+    fixed = bp.get("fixed_properties") or {}
+    image = bp.get("image_url") or ((bp.get("image") or {}).get("url") if isinstance(bp.get("image"), dict) else "")
+    return {
+        "name": bp["name"],
+        "collector_number": blueprint_number(bp),
+        "version": bp.get("version") or "",
+        "rarity": fixed.get("mtg_rarity") or "",
+        "image_url": (image or "")[:500],
+    }
+
+
+def sync_expansions(client):
+    """Upsert every MTG expansion from CardTrader. Returns how many there are."""
+    from .cardtrader import MTG_GAME_ID
+    from .models import Expansion
+
+    count = 0
+    for e in client.expansions():
+        if e.get("game_id") != MTG_GAME_ID or not e.get("code"):
+            continue
+        Expansion.objects.update_or_create(ct_id=e["id"], defaults={"code": e["code"].lower(), "name": e["name"]})
+        count += 1
+    return count
+
+
+def ensure_blueprints(client, expansion, *, force=False):
+    """Load an expansion's blueprints once (or again with force). Returns how many were stored."""
+    from django.utils import timezone
+
+    from .models import Blueprint
+
+    if expansion.blueprints_synced_at and not force:
+        return 0
+    count = 0
+    for bp in client.blueprints(expansion.ct_id):
+        Blueprint.objects.update_or_create(
+            ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp)}
+        )
+        count += 1
+    expansion.blueprints_synced_at = timezone.now()
+    expansion.save(update_fields=["blueprints_synced_at"])
+    return count
+
+
+def expansion_by_code(code):
+    from .models import Expansion
+
+    code = (code or "").strip().lower()
+    return Expansion.objects.filter(code=code).first() if code else None
