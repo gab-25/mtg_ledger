@@ -11,7 +11,7 @@ from django.views.decorators.http import require_POST
 from . import cardmarket, services
 from .cardtrader import CardTraderError
 from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm
-from .models import Card, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
+from .models import Card, CardmarketProduct, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
 from .presentation import COLOR_FILTERS, ORDER_TABS, item_badge, listing_badge, order_badge, pip
 
 PAGE_SIZE = 50
@@ -180,6 +180,16 @@ def sale(request):
         "nav": "sale", "stats": stats, "cards": cards, "status": status,
         "statuses": Listing.Status.choices,
     })
+
+
+@login_required
+def prices(request):
+    """Search the local Cardmarket catalog by name."""
+    q = request.GET.get("q", "").strip()
+    page = None
+    if q:
+        page = Paginator(CardmarketProduct.objects.filter(name__icontains=q), PAGE_SIZE).get_page(request.GET.get("page"))
+    return render(request, "ledger/prices.html", {"nav": "prices", "q": q, "page": page})
 
 
 @login_required
