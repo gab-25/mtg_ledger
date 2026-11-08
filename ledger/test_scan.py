@@ -179,3 +179,25 @@ class SaveTest(ScanTestCase):
         with self.assertRaises(scan.ScanError):
             scan.save_session(self.session)
         self.assertEqual(self.session.status, "saved")
+
+
+class CardForPrintingTest(ScanTestCase):  # I4
+    def save_blueprints(self, *blueprints):
+        Card.objects.filter(name="Counterspell").delete()
+        for i, bp in enumerate(blueprints):
+            self.bolt = bp
+            self.capture(f"c{i}")
+        scan.save_session(self.session)
+
+    def test_alternate_printings_without_number_stay_separate(self):
+        Blueprint.objects.filter(pk=self.bolt.pk).update(collector_number="")
+        base = Blueprint.objects.get(pk=self.bolt.pk)
+        alt = Blueprint.objects.create(ct_id=1299, expansion=self.dmr, name="Counterspell", version="borderless")
+        self.save_blueprints(base, alt)
+        self.assertEqual(Card.objects.filter(ct_blueprint_id__in=[1201, 1299]).count(), 2)
+
+    def test_printings_sharing_a_number_stay_separate(self):
+        alt = Blueprint.objects.create(ct_id=1299, expansion=self.dmr, name="Counterspell",
+                                       collector_number="45", version="borderless")
+        self.save_blueprints(self.bolt, alt)
+        self.assertEqual(Card.objects.filter(ct_blueprint_id__in=[1201, 1299]).count(), 2)

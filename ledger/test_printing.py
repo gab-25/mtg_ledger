@@ -102,3 +102,9 @@ class ResolvePrintingTest(LedgerTestCase):
         self.client.post(reverse("ledger:publish"))
         listing = Listing.objects.get(item__card=printing)
         self.assertEqual(listing.status, Listing.Status.PUBLISHED)
+
+    def test_resolve_does_not_merge_into_other_blueprint(self):  # I4
+        Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=7777)
+        legacy = Card.objects.get(name="Counterspell", set_code="DMR", collector_number="")
+        self.assertEqual(self.resolve([legacy]), [legacy])
+        self.assertTrue(Card.objects.filter(pk=legacy.pk, ct_blueprint_id__isnull=True).exists())

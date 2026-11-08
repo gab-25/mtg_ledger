@@ -368,7 +368,6 @@ class ScanLine(models.Model):
     frame = models.BinaryField(null=True, blank=True)
     type_line = models.CharField(max_length=200, blank=True)
     color = models.CharField(max_length=1, choices=Color.choices, blank=True)
-    capture_id = models.CharField(max_length=64, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -386,3 +385,19 @@ class ScanLine(models.Model):
             return self.for_sale
         threshold = self.session.sale_threshold
         return threshold is not None and self.price > threshold
+
+
+class ScanCapture(models.Model):
+    """One photo sent by the phone, so a retried upload is never processed (or paid) twice."""
+
+    session = models.ForeignKey(ScanSession, on_delete=models.CASCADE, related_name="captures")
+    capture_id = models.CharField(max_length=64)
+    line = models.ForeignKey(ScanLine, null=True, blank=True, on_delete=models.SET_NULL, related_name="captures")
+    done = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["session", "capture_id"], name="unique_scan_capture")]
+
+    def __str__(self):
+        return f"{self.capture_id} → {self.line_id or '-'}"

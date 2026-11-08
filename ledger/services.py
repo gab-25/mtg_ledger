@@ -254,6 +254,11 @@ def resolve_blueprints(client, cards):
                 .filter(Q(ct_blueprint_id=bp["id"]) | Q(set_code=card.set_code, collector_number=number) & ~Q(collector_number=""))
                 .first()
             )
+            if existing is not None and existing.ct_blueprint_id not in (None, bp["id"]):
+                _log(f"{card} matches #{number}, already used by {existing} (another printing): fix it by hand",
+                     SyncLog.Level.WARNING)
+                unmatched.append(card)
+                continue
             if existing is not None:
                 if not merge_cards(card, existing):
                     _log(f"{card} duplicates {existing} but both have live listings: merge them by hand",

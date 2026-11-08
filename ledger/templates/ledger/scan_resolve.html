@@ -16,7 +16,12 @@
 <form method="get" class="search" role="search">
   {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
   <label for="q" class="sr-only">Search by name</label>
-  <input id="q" name="q" value="{{ q }}" placeholder="Search by name{% if session.expansion %} in {{ session.expansion.code|upper }}{% endif %}…">
+  <input id="q" name="q" value="{{ q }}" placeholder="Search by name…">
+  <label for="set" class="sr-only">Expansion</label>
+  <select id="set" name="set" class="input" onchange="this.form.submit()">
+    <option value="all"{% if not where %} selected{% endif %}>All loaded expansions</option>
+    {% for e in expansions %}<option value="{{ e.code }}"{% if where and where.pk == e.pk %} selected{% endif %}>{{ e }}</option>{% endfor %}
+  </select>
 </form>
 
 <form method="post" class="scan-panel">

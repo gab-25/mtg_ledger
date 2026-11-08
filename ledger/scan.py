@@ -1,12 +1,12 @@
 """Camera scan sessions: the draft list of scanned cards and saving it into the collection."""
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 
 from . import pricing
 from .cardtrader import CardTraderError
 from .forms import get_or_create_card
-from .models import Card, CollectionItem, Color, Listing, ScanLine, ScanSession, SyncLog
+from .models import Card, CollectionItem, Color, Listing, ScanCapture, ScanLine, ScanSession, SyncLog
 
 UNSET = object()
 
@@ -59,14 +59,15 @@ def _merge_or_save(line):
     twin.quantity += line.quantity
     twin.save(update_fields=["quantity", "updated_at"])
     if line.pk:
+        ScanCapture.objects.filter(line=line).update(line=twin)
         line.delete()
     return twin
 
 
-def _add_certain(session, client, blueprint, language, foil, *, capture_id="", type_line="", color=""):
+def _add_certain(session, client, blueprint, language, foil, *, type_line="", color=""):
     line = ScanLine(
         session=session, blueprint=blueprint, language=language, foil=foil,
-        condition=session.default_condition, capture_id=capture_id, type_line=type_line, color=color,
+        condition=session.default_condition, type_line=type_line, color=color,
     )
     twin = _twin(line)
     if twin is not None:
@@ -78,23 +79,42 @@ def _add_certain(session, client, blueprint, language, foil, *, capture_id="", t
     return line, False
 
 
-def add_capture(session, client, rec, m, *, frame, capture_id):
-    """Add what one camera capture recognised. Returns (line, merged)."""
-    if capture_id:
-        done = session.lines.filter(capture_id=capture_id).first()
-        if done is not None:
-            return done, False
+def reserve_capture(session, capture_id):
+    """Claim a capture id. Returns (capture, created); created=False means it was seen before."""
+    try:
+        with transaction.atomic():
+            return ScanCapture.objects.create(session=session, capture_id=capture_id), True
+    except IntegrityError:
+        return ScanCapture.objects.select_related("line").get(session=session, capture_id=capture_id), False
+
+
+def release_capture(capture):
+    """Forget a capture that failed, so the phone can retry it with the same id."""
+    if capture is not None and not capture.done:
+        capture.delete()
+
+
+def add_capture(session, client, rec, m, *, frame, capture_id="", capture=None):
+    """Add what one camera capture recognised. Returns (line, merged); a repeated capture id changes nothing."""
+    if capture is None and capture_id:
+        capture, created = reserve_capture(session, capture_id)
+        if not created:
+            return capture.line, False
     if m.blueprint is not None:
-        return _add_certain(
-            session, client, m.blueprint, rec.language, rec.foil,
-            capture_id=capture_id, type_line=rec.type_line, color=rec.color,
+        line, merged = _add_certain(
+            session, client, m.blueprint, rec.language, rec.foil, type_line=rec.type_line, color=rec.color,
         )
-    line = ScanLine.objects.create(
-        session=session, language=rec.language, foil=rec.foil, condition=session.default_condition,
-        needs_confirmation=True, candidates=[b.ct_id for b in m.candidates], frame=frame,
-        capture_id=capture_id, type_line=rec.type_line, color=rec.color,
-    )
-    return line, False
+    else:
+        line = ScanLine.objects.create(
+            session=session, language=rec.language, foil=rec.foil, condition=session.default_condition,
+            needs_confirmation=True, candidates=[b.ct_id for b in m.candidates], frame=frame,
+            type_line=rec.type_line, color=rec.color,
+        )
+        merged = False
+    if capture is not None:
+        capture.line, capture.done = line, True
+        capture.save(update_fields=["line", "done"])
+    return line, merged
 
 
 def add_manual(session, client, blueprint, language, foil):
@@ -152,18 +172,28 @@ def _card_for(line):
         return card
     set_code = bp.expansion.code.upper()
     defaults = {"type_line": line.type_line, "color": line.color or Color.COLORLESS}
-    if not bp.version:  # base printing: adopt a hand-entered (name + set) row instead of duplicating it
+    if not bp.version and bp.collector_number:
+        # base printing: adopt a hand-entered (name + set) row instead of duplicating it
         legacy = Card.objects.filter(
             name__iexact=bp.name, set_code=set_code, collector_number="", ct_blueprint_id__isnull=True
         ).first()
         if legacy is not None and not Card.objects.filter(
-            ~Q(collector_number=""), set_code=set_code, collector_number=bp.collector_number
+            set_code=set_code, collector_number=bp.collector_number
         ).exists():
             legacy.ct_blueprint_id = bp.ct_id
             legacy.collector_number = bp.collector_number
             legacy.save(update_fields=["ct_blueprint_id", "collector_number"])
             return legacy
-    card = get_or_create_card(bp.name, set_code, bp.collector_number, **defaults)
+    # One Card per printing: a missing number, or one already taken by another blueprint, gets a unique stand-in.
+    number = bp.collector_number or f"CT{bp.ct_id}"
+    taken = Card.objects.filter(set_code=set_code, collector_number=number).first()
+    if taken is not None and taken.ct_blueprint_id not in (None, bp.ct_id):
+        SyncLog.objects.create(
+            level=SyncLog.Level.WARNING,
+            message=f"{bp} shares #{number} with {taken}: stored as #CT{bp.ct_id}"[:300],
+        )
+        number = f"CT{bp.ct_id}"
+    card = get_or_create_card(bp.name, set_code, number, **defaults)
     if card.ct_blueprint_id is None:
         card.ct_blueprint_id = bp.ct_id
         card.save(update_fields=["ct_blueprint_id"])

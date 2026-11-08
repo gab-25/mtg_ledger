@@ -15,6 +15,7 @@ class FakeRecognizer:
     def __init__(self):
         self.result = Recognition(name="Counterspell", set_code="dmr", collector_number="045", language="IT")
         self.error = None
+        self.calls = 0
 
     def __enter__(self):
         return self
@@ -23,6 +24,7 @@ class FakeRecognizer:
         pass
 
     def recognize_card(self, image):
+        self.calls += 1
         if self.error:
             raise self.error
         return self.result
@@ -45,6 +47,10 @@ class ScanViewsTest(LedgerTestCase):
         price = mock.patch("ledger.pricing.price_for", return_value=Decimal("5.00"))
         price.start()
         self.addCleanup(price.stop)
+
+    @property
+    def recognizer_calls(self):
+        return self.recognizer.calls
 
     def start(self):
         self.client.post(reverse("ledger:scan_start"), {"expansion": self.dmr.pk, "condition": "NM"})
@@ -158,3 +164,35 @@ class ScanViewsTest(LedgerTestCase):
 
     def test_collection_links_to_scan(self):
         self.assertContains(self.client.get(reverse("ledger:collection")), reverse("ledger:scan_start"))
+
+
+class ReviewFixesViewsTest(ScanViewsTest):
+    def test_retry_after_merge_adds_once(self):  # C1
+        session = self.start()
+        self.capture(session, "a")
+        self.capture(session, "b")
+        data = self.capture(session, "b").json()
+        self.assertEqual((data["status"], data["count"]), ("added", 2))
+        self.assertEqual(self.recognizer_calls, 2)
+
+    def test_capture_in_progress_is_not_reprocessed(self):  # I1
+        from .models import ScanCapture
+
+        session = self.start()
+        ScanCapture.objects.create(session=session, capture_id="busy")
+        resp = self.capture(session, "busy")
+        self.assertEqual((resp.status_code, resp.json()["status"]), (202, "pending"))
+        self.assertEqual(self.recognizer_calls, 0)
+
+    def test_failed_capture_can_be_retried_with_same_id(self):  # I1
+        session = self.start()
+        self.recognizer.error = OpenRouterError("down")
+        self.assertEqual(self.capture(session, "x").status_code, 502)
+        self.recognizer.error = None
+        self.assertEqual(self.capture(session, "x").json()["status"], "added")
+
+    def test_search_other_expansion_loads_it(self):  # I2 / I3
+        session = self.start()  # DMR locked
+        url = reverse("ledger:scan_search", args=[session.pk])
+        resp = self.client.get(url, {"q": "sheoldred", "set": "dmu"})
+        self.assertContains(resp, "Sheoldred, the Apocalypse")

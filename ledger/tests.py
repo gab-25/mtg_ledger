@@ -5,6 +5,7 @@ from unittest import mock
 
 import httpx
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
@@ -149,6 +150,7 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
 
 class LedgerTestCase(TestCase):
     def setUp(self):
+        cache.clear()
         call_command("seed_demo", "--reset", stdout=StringIO())
         self.user = get_user_model().objects.create_user("gab", password="pw")
         self.client.force_login(self.user)

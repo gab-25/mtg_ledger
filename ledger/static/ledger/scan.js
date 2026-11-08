@@ -11,6 +11,9 @@
   const SHARP_MIN = 60;      // minimum sharpness inside the guide
   const CAPTURE_LONG_SIDE = 1000;
   const JPEG_QUALITY = 0.8;
+  const REQUEST_TIMEOUT_MS = 30000;
+  const ATTEMPTS = 4;        // same capture_id, on network errors, 5xx, non-JSON or "pending"
+  const RETRY_DELAY_MS = 1500;
 
   const root = document.getElementById("scan");
   if (!root) return;
@@ -122,13 +125,23 @@
     return new Promise((resolve) => c.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
   }
 
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   async function post(url, body) {
-    const resp = await fetch(url, {
-      method: "POST",
-      body,
-      headers: { "X-CSRFToken": csrf, Accept: "application/json" },
-      credentials: "same-origin",
-    });
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        body,
+        headers: { "X-CSRFToken": csrf, Accept: "application/json" },
+        credentials: "same-origin",
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     let data = null;
     try { data = await resp.json(); } catch (_) { /* not JSON */ }
     return { resp, data };
@@ -149,12 +162,21 @@
         f.append("capture_id", id);
         return f;
       };
-      let result;
-      try {
-        result = await post(captureUrl, form());
-      } catch (_) {
-        result = await post(captureUrl, form()); // one retry, same capture_id: never counted twice
+      // The same capture_id is never processed twice by the server, so retrying it is always safe.
+      let result = null;
+      for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        try {
+          result = await post(captureUrl, form());
+        } catch (_) {
+          result = null; // network error or timeout
+        }
+        const st = result && result.data && result.data.status;
+        const status = result ? result.resp.status : 0;
+        const retry = !result || status >= 500 || !result.data || st === "pending";
+        if (!retry || attempt === ATTEMPTS) break;
+        await sleep(RETRY_DELAY_MS);
       }
+      if (!result) throw new Error("network");
       const { data } = result;
       if (data && data.status === "added") {
         const l = data.line;
@@ -170,12 +192,15 @@
       } else if (data && data.status === "uncertain") {
         window.location.href = data.resolve_url;
         return;
+      } else if (data && data.status === "duplicate") {
+        countEl.textContent = data.count;
       } else {
         throw new Error((data && data.message) || "Unexpected answer");
       }
     } catch (_) {
-      showToast({ state: "Couldn't recognise — hold the card still to retry", error: true });
-      armed = true; // retry without moving the card
+      // Never loop paid recognitions: retry by tapping the shutter, or by moving the card and holding it again.
+      showToast({ state: "Couldn't recognise — tap the shutter or re-frame the card to retry", error: true });
+      armed = false;
     } finally {
       busy = false;
       guide.classList.remove("is-busy");

@@ -55,10 +55,27 @@ def _line_json(line):
     }
 
 
-def _search(session, q):
+def _search_expansion(request, session):
+    """The expansion to search in: ?set=<code> (loaded on demand), else the session's, else None (all loaded)."""
+    code = (request.GET.get("set") or "").strip().lower()
+    if code == "all":
+        return None
+    if code:
+        expansion = catalog.expansion_by_code(code)
+        if expansion is not None:
+            try:
+                with services.make_client() as client:
+                    catalog.ensure_blueprints(client, expansion)
+            except CardTraderError as exc:
+                messages.warning(request, f"Could not load {expansion}: {exc}")
+            return expansion
+    return session.expansion
+
+
+def _search(expansion, q):
     qs = Blueprint.objects.select_related("expansion")
-    if session.expansion_id:
-        qs = qs.filter(expansion=session.expansion)
+    if expansion is not None:
+        qs = qs.filter(expansion=expansion)
     q = q.strip()
     return list(qs.filter(name__icontains=q).order_by("name", "ct_id")[:SEARCH_LIMIT]) if q else []
 
@@ -127,19 +144,27 @@ def scan_capture(request, pk):
     if frame is None or frame.size > MAX_FRAME_BYTES:
         return JsonResponse({"status": "error", "message": "Missing or oversized photo."}, status=400)
 
-    done = session.lines.filter(capture_id=capture_id).first() if capture_id else None
-    if done is None:
+    capture, created = scan.reserve_capture(session, capture_id) if capture_id else (None, True)
+    if not created:
+        if not capture.done:  # the first upload of this photo is still being recognised
+            return JsonResponse({"status": "pending", "count": _count(session)}, status=202)
+        done, merged = capture.line, False
+        if done is None:  # recognised, then undone or removed
+            return JsonResponse({"status": "duplicate", "count": _count(session)})
+    else:
         image = frame.read()
         try:
             with services.make_openrouter() as model:
                 rec = model.recognize_card(image)
             with services.make_client() as client:
                 found = recognition.match(client, rec, session.expansion)
-                done, merged = scan.add_capture(session, client, rec, found, frame=image, capture_id=capture_id)
+                done, merged = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
         except (OpenRouterError, CardTraderError) as exc:
+            scan.release_capture(capture)
             return JsonResponse({"status": "error", "message": str(exc)}, status=502)
-    else:
-        merged = False
+        except Exception:
+            scan.release_capture(capture)
+            raise
 
     count = _count(session)
     if done.needs_confirmation:
@@ -224,11 +249,12 @@ def scan_resolve(request, pk):
                 scan.confirm_line(line, None, blueprint, language)
             return redirect(back)
     q = request.GET.get("q", "")
+    where = _search_expansion(request, session)
     by_id = {b.ct_id: b for b in Blueprint.objects.filter(ct_id__in=line.candidates).select_related("expansion")}
     return render(request, "ledger/scan_resolve.html", {
         "session": session, "line": line, "next": back, "q": q, "error": error,
         "candidates": [by_id[i] for i in line.candidates if i in by_id],
-        "results": _search(session, q),
+        "results": _search(where, q), "where": where, "expansions": Expansion.objects.all(),
         "languages": Language.choices, "conditions": Condition.choices,
     })
 
@@ -254,9 +280,10 @@ def scan_search(request, pk):
             messages.success(request, f"Added {blueprint.name}.")
             return redirect(camera)
     q = request.GET.get("q", "")
+    where = _search_expansion(request, session)
     return render(request, "ledger/scan_resolve.html", {
         "session": session, "line": None, "next": camera, "q": q, "error": error,
-        "candidates": [], "results": _search(session, q),
+        "candidates": [], "results": _search(where, q), "where": where, "expansions": Expansion.objects.all(),
         "languages": Language.choices, "conditions": Condition.choices,
     })
 

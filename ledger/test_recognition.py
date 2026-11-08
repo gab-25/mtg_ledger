@@ -49,3 +49,20 @@ class MatchTest(LedgerTestCase):
         self.assertEqual(m.reason, "language")
         self.assertIsNone(m.blueprint)
         self.assertEqual([b.ct_id for b in m.candidates], [1101])
+
+
+class MatchReviewFixesTest(MatchTest):
+    def test_locked_expansion_follows_other_printed_set(self):  # I2
+        rec = Recognition(name="Counterspell", set_code="dmr", collector_number="45", language="EN")
+        m = match(self.api, rec, self.neo)
+        self.assertEqual((m.reason, m.blueprint.ct_id), ("ok", 1201))
+
+    def test_name_only_across_loaded_sets_is_uncertain(self):  # I3
+        m = match(self.api, Recognition(name=FABLE + "", collector_number="356", language="EN"), None)
+        self.assertEqual(m.reason, "ambiguous")
+        self.assertEqual([b.ct_id for b in m.candidates], [1101])
+
+    def test_unknown_codes_sync_expansions_once(self):  # I5
+        match(self.api, Recognition(name="X", set_code="zz1", language="EN"), None)
+        match(self.api, Recognition(name="Y", set_code="zz2", language="EN"), None)
+        self.assertEqual(self.ct.calls.count(("GET", "/expansions")), 2)  # setUp + one throttled sync

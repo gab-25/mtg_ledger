@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from django.core.cache import cache
 from django.db.models import Case, IntegerField, Q, Value, When
 
 from . import catalog
@@ -32,20 +33,35 @@ class Match:
     reason: str = "not_found"
 
 
+EXPANSIONS_SYNC_KEY = "ledger:expansions-synced"
+EXPANSIONS_SYNC_EVERY = 3600  # seconds: unknown set codes refresh the expansion list at most this often
+
+
+def _expansion_for_code(client, code):
+    found = catalog.expansion_by_code(code)
+    if found is None and cache.add(EXPANSIONS_SYNC_KEY, True, EXPANSIONS_SYNC_EVERY):
+        catalog.sync_expansions(client)
+        found = catalog.expansion_by_code(code)
+    return found
+
+
 def _scope(client, rec, expansion):
-    if expansion is not None:
+    """(blueprints to search, certain_allowed). Matches outside a known expansion are never certain."""
+    code = rec.set_code.strip().lower()
+    if expansion is not None and (not code or code == expansion.code):
         catalog.ensure_blueprints(client, expansion)
-        return Blueprint.objects.filter(expansion=expansion)
-    if rec.set_code:
-        found = catalog.expansion_by_code(rec.set_code)
-        if found is None:
-            catalog.sync_expansions(client)
-            found = catalog.expansion_by_code(rec.set_code)
+        return Blueprint.objects.filter(expansion=expansion), True
+    if code:
+        # A printed code wins over the locked expansion: boosters hold bonus-sheet and List cards.
+        found = _expansion_for_code(client, code)
         if found is not None:
             catalog.ensure_blueprints(client, found)
-            return Blueprint.objects.filter(expansion=found)
-    # No usable set code (or a misread one): search everything already in the local catalog.
-    return Blueprint.objects.all()
+            return Blueprint.objects.filter(expansion=found), True
+    if expansion is not None:
+        catalog.ensure_blueprints(client, expansion)
+        return Blueprint.objects.filter(expansion=expansion), False
+    # No usable set code: search what is already in the local catalog, and let the owner confirm.
+    return Blueprint.objects.all(), False
 
 
 def _by_name(qs, name):
@@ -70,7 +86,7 @@ def _same_name(bp, name):
 
 
 def match(client, rec, expansion):
-    scope = _scope(client, rec, expansion)
+    scope, certain_allowed = _scope(client, rec, expansion)
     number = catalog.normalize_number(rec.collector_number)
     certain = None
 
@@ -90,6 +106,8 @@ def match(client, rec, expansion):
             return Match(None, named, "ambiguous")
         certain = named[0]
 
+    if not certain_allowed:
+        return Match(None, [certain], "ambiguous")
     if not rec.language:
         return Match(None, [certain], "language")
     return Match(certain, [certain], "ok")
