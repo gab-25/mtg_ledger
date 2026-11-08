@@ -58,8 +58,9 @@ cat <<EOF
   MTG Ledger is on your tailnet:  https://${dns}
   No user yet? Create one with: uv run python manage.py createsuperuser
 
-  Open that address on the computer, connect OpenRouter and CardTrader in Profile and settings,
+  Open that address on the computer, connect CardTrader in Profile and settings,
   start a session in Scan cards and scan the QR code with the phone (Tailscale on).
+  Card recognition reads OPENROUTER_API_KEY from the environment or .env.
   Ctrl+C stops everything.
 
 EOF

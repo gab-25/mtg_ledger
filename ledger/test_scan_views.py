@@ -306,9 +306,8 @@ class ScanErrorMessagesTest(ScanViewsBase):
         Expansion.objects.all().delete()
         no_token = CardTraderError("CardTrader API token is not configured.")
         with mock.patch.object(services, "make_client", side_effect=no_token), \
-                self.assertLogs("ledger.scan_views", "WARNING") as logs:
+                self.assertNoLogs("ledger.scan_views", "WARNING"):
             resp = self.client.get(reverse("ledger:scan_start"))
-        self.assertIn("OPENROUTER_API_KEY", logs.output[0])
         self.assertNotContains(resp, "Could not load the expansions")
         self.assertNotContains(resp, "OpenRouter")
         self.assertContains(resp, "CardTrader is not connected")

@@ -108,7 +108,6 @@ def scan_start(request):
                 catalog.sync_expansions(client)
         except CardTraderError as exc:
             messages.error(request, f"Could not load the expansions from CardTrader: {exc}")
-    _openrouter_configured()  # logs a warning in the server console when the key is missing
     last = ScanSession.objects.order_by("-created_at", "-id").first()
     return render(request, "ledger/scan_start.html", {
         "missing": _missing_services(),
