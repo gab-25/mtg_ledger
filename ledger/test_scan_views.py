@@ -319,3 +319,18 @@ class NoCardTest(ScanViewsBase):
         self.assertContains(resp, "No card in the picture")
         self.assertEqual(ScanLine.objects.count(), 0)
         self.assertEqual(self.capture(session, "empty2")["X-Scan-Count"], "0")
+
+
+class CameraToastTest(ScanViewsBase):
+    def test_new_session_camera_shows_no_last_added(self):
+        session = self.start()
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]))
+        self.assertNotContains(resp, "Last added")
+        self.assertContains(resp, 'id="scan-toast" role="status" aria-live="polite" hidden')
+
+    def test_camera_reopened_shows_last_added_card(self):
+        session = self.start()
+        self.capture(session)
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]))
+        self.assertContains(resp, "Last added")
+        self.assertContains(resp, "Counterspell")

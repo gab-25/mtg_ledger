@@ -128,11 +128,12 @@ def scan_camera(request, uid):
             "nav": "collection", "session": session, "count": _count(session),
             "phone_url": phone_url, "phone_qr": _qr_svg(phone_url), "phone_secure": request.is_secure(),
         })
+    last = session.lines.filter(needs_confirmation=False).select_related("blueprint__expansion").first()
     return render(request, "ledger/scan_camera.html", {
         "session": session,
         "count": _count(session),
-        "line": session.lines.filter(needs_confirmation=False).select_related("blueprint__expansion").first(),
-        "state": "Last added",
+        "line": last,
+        "state": "Last added" if last else "",
     })
 
 
