@@ -7,6 +7,7 @@ Ledger's cards (set + collector number).
 
 import gzip
 import json
+import logging
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,8 @@ PRICE_FIELDS = {
     "avg1-foil": "avg1_foil", "avg7-foil": "avg7_foil", "avg30-foil": "avg30_foil",
 }
 BATCH = 2000
+
+logger = logging.getLogger(__name__)
 
 
 class CardmarketError(Exception):
@@ -105,7 +108,8 @@ def _money(value):
 def _fetch(client):
     """Download and parse every source; raises CardmarketError before anything is written."""
     try:
-        products = _get_json(client, PRODUCTS_URL)["products"]
+        # One row per product: a repeated idProduct would make the upsert touch the same row twice.
+        products = list({p["idProduct"]: p for p in reversed(_get_json(client, PRODUCTS_URL)["products"])}.values())
         guide = _get_json(client, PRICE_GUIDE_URL)
         guide_date = datetime.strptime(guide["createdAt"], "%Y-%m-%dT%H:%M:%S%z")
         prices = {row["idProduct"]: row for row in guide["priceGuides"]}
@@ -171,6 +175,13 @@ def run_sync(client=None):
     except CardmarketError as exc:
         SyncLog.objects.create(message=f"Cardmarket sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)
         return None
+    except Exception as exc:
+        # Unexpected (database, bug): still visible in the Activity log, and the task is marked failed.
+        logger.exception("Cardmarket sync failed")
+        SyncLog.objects.create(
+            message=f"Cardmarket sync failed: {type(exc).__name__}: {exc}"[:300], level=SyncLog.Level.WARNING
+        )
+        raise
     finally:
         if own:
             client.close()

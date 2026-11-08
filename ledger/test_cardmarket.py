@@ -201,6 +201,20 @@ class SyncTest(TestCase):
         self.assertIsNone(cardmarket.run_sync(self.client_))
         self.assertEqual(CardmarketProduct.objects.count(), 0)
 
+    def test_duplicate_product_rows_do_not_break_sync(self):
+        self.sources.products["products"].append(dict(self.sources.products["products"][0]))
+        result = cardmarket.sync(self.client_)
+        self.assertEqual(result.products, 3)
+        self.assertEqual(CardmarketProduct.objects.count(), 3)
+
+    def test_unexpected_failure_is_logged_and_raised(self):
+        with mock.patch.object(CardmarketProduct.objects, "bulk_create", side_effect=RuntimeError("db down")):
+            with self.assertRaises(RuntimeError):
+                cardmarket.run_sync(self.client_)
+        log = SyncLog.objects.first()
+        self.assertEqual(log.level, SyncLog.Level.WARNING)
+        self.assertEqual(log.message, "Cardmarket sync failed: RuntimeError: db down")
+
     def test_run_sync_logs_counts(self):
         Card.objects.create(name="Ugin", set_code="M21", collector_number="1")
         cardmarket.run_sync(self.client_)
