@@ -150,3 +150,7 @@ LOGOUT_REDIRECT_URL = 'login'
 
 # CardTrader Full API token (can also be set per service from the Sync > Settings page)
 CARDTRADER_API_TOKEN = os.environ.get('CARDTRADER_API_TOKEN', '')
+
+# Card recognition from the camera (vision model on OpenRouter)
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'google/gemini-2.5-flash')

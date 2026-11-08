@@ -22,6 +22,7 @@ from .cardtrader import (
     CardTraderError,
     money,
 )
+from .openrouter import OpenRouterClient
 from .catalog import blueprint_number, merge_cards, normalize_number
 from .forms import get_or_create_card
 from .models import (
@@ -38,6 +39,7 @@ from .models import (
     SyncService,
 )
 
+OPENROUTER = "OpenRouter"
 CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price", "number"]
 CARDTRADER = "CardTrader"
 
@@ -77,6 +79,45 @@ def remove_api_token():
     service.api_token = ""
     service.save(update_fields=["api_token"])
     _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING)
+
+
+def get_openrouter():
+    service, _ = SyncService.objects.get_or_create(
+        name=OPENROUTER, defaults={"description": "Card recognition", "direction": "Camera → OpenRouter (API)"},
+    )
+    return service
+
+
+def openrouter_key(service=None):
+    service = service or get_openrouter()
+    return service.api_token or getattr(settings, "OPENROUTER_API_KEY", "")
+
+
+def make_openrouter(key=None):
+    """Build the OpenRouter client. Tests patch this to inject a fake."""
+    return OpenRouterClient(key or openrouter_key(), model=settings.OPENROUTER_MODEL)
+
+
+def check_openrouter_key(key):
+    with make_openrouter(key) as client:
+        client.check_key()
+
+
+def set_openrouter_key(key):
+    """Check the key with OpenRouter, then store it. Raises OpenRouterError if rejected."""
+    key = key.strip()
+    check_openrouter_key(key)
+    service = get_openrouter()
+    service.api_token = key
+    service.save(update_fields=["api_token"])
+    _log(f"{OPENROUTER}: API key connected")
+
+
+def remove_openrouter_key():
+    service = get_openrouter()
+    service.api_token = ""
+    service.save(update_fields=["api_token"])
+    _log(f"{OPENROUTER}: API key removed", SyncLog.Level.WARNING)
 
 
 def _log(message, level=SyncLog.Level.OK):
