@@ -7,6 +7,6 @@ def remove_openrouter_service(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("ledger", "0008_scan_uuids")]
+    dependencies = [("ledger", "0009_cardmarket")]
 
     operations = [migrations.RunPython(remove_openrouter_service, migrations.RunPython.noop)]
