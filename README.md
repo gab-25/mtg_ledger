@@ -88,9 +88,36 @@ are created as *To publish*).
 - Connect OpenRouter from **Profile and settings → Connected services** (or export `OPENROUTER_API_KEY`);
   `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
-- On a computer, the Scan cards page shows a **QR code** that opens the same page on your phone.
-- The browser only gives camera access over **HTTPS**: in development expose `runserver` through an HTTPS tunnel
-  (and add its host to `ALLOWED_HOSTS` / `CSRF_TRUSTED_ORIGINS`).
+- The camera page works on **smartphones only** (webcams can't focus on a card up close). A session started on a
+  computer shows a **QR code** that opens the same session on the phone; Review, confirmation and search work on
+  both.
+- The browser only gives camera access over **HTTPS**.
+
+### Trying it from your phone in development (Tailscale)
+
+[Tailscale](https://tailscale.com) gives the development server an HTTPS address with a real certificate that only
+your own devices can reach.
+
+1. Install Tailscale on the computer and on the phone, signed in with the same account, and keep it connected on
+   the phone while testing.
+2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
+3. Expose the development server on the tailnet:
+   ```bash
+   tailscale serve --https=443 8001
+   ```
+   It prints the address, e.g. `https://my-pc.my-tailnet.ts.net`.
+4. Start Django on that port, trusting the Tailscale proxy:
+   ```bash
+   export DJANGO_ALLOWED_HOSTS=.ts.net,localhost
+   export DJANGO_CSRF_TRUSTED_ORIGINS=https://*.ts.net
+   export DJANGO_BEHIND_HTTPS_PROXY=true
+   uv run python manage.py runserver 8001
+   ```
+5. Open the `ts.net` address on the computer, connect OpenRouter and CardTrader in **Profile and settings**, start a
+   session in **Scan cards** and scan the QR code with the phone.
+
+If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`. Use a separate
+database (`POSTGRES_DB`) if another checkout shares the same PostgreSQL.
 
 ## CSV
 

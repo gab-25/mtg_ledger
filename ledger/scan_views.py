@@ -1,5 +1,6 @@
 """Camera scanning: start a session, capture cards from the phone, resolve doubts, review and save."""
 
+import re
 from decimal import Decimal, InvalidOperation
 
 import segno
@@ -18,6 +19,12 @@ from .models import Blueprint, Condition, Expansion, Language, ScanLine, ScanSes
 from .openrouter import OpenRouterError
 
 MAX_FRAME_BYTES = 2 * 1024 * 1024
+PHONE_UA = re.compile(r"Mobi|Android|iPhone|iPod", re.IGNORECASE)
+
+
+def _is_phone(request):
+    """Camera scanning is for smartphones (autofocus rear camera); desktops and webcams are not supported."""
+    return bool(PHONE_UA.search(request.headers.get("User-Agent", "")))
 SEARCH_LIMIT = 20
 
 
@@ -99,12 +106,9 @@ def scan_start(request):
         except CardTraderError as exc:
             messages.error(request, f"Could not load the expansions from CardTrader: {exc}")
     last = ScanSession.objects.order_by("-created_at", "-id").first()
-    phone_url = request.build_absolute_uri(reverse("ledger:scan_start"))
     return render(request, "ledger/scan_start.html", {
         "missing": _missing_services(),
-        "phone_url": phone_url,
-        "phone_qr": _qr_svg(phone_url),
-        "phone_secure": request.is_secure(),
+        "is_phone": _is_phone(request),
         "nav": "collection",
         "expansions": Expansion.objects.all(),
         "conditions": Condition.choices,
@@ -118,6 +122,12 @@ def scan_camera(request, uid):
     session = _open_session(uid)
     if session is None:
         return redirect("ledger:collection")
+    if not _is_phone(request):
+        phone_url = request.build_absolute_uri(reverse("ledger:scan_camera", args=[session.uuid]))
+        return render(request, "ledger/scan_phone_only.html", {
+            "nav": "collection", "session": session, "count": _count(session),
+            "phone_url": phone_url, "phone_qr": _qr_svg(phone_url), "phone_secure": request.is_secure(),
+        })
     return render(request, "ledger/scan_camera.html", {
         "session": session,
         "count": _count(session),

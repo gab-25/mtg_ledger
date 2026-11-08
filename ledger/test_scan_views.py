@@ -12,6 +12,10 @@ from .recognition import Recognition
 from .tests import LedgerTestCase
 
 
+IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"
+DESKTOP = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
+
+
 class FakeRecognizer:
     def __init__(self):
         self.result = Recognition(name="Counterspell", set_code="dmr", collector_number="045", language="IT")
@@ -49,6 +53,7 @@ class ScanViewsBase(LedgerTestCase):
         price.start()
         self.addCleanup(price.stop)
         self.set_keys(openrouter="or-key", cardtrader="ct-token")
+        self.client.defaults["HTTP_USER_AGENT"] = IPHONE
 
     def set_keys(self, *, openrouter, cardtrader):
         for service, value in ((services.get_openrouter(), openrouter), (services.get_cardtrader(), cardtrader)):
@@ -223,18 +228,35 @@ class ReviewFixesViewsTest(ScanViewsBase):
         self.assertEqual(self.recognizer_calls, 0)
 
 
-class PhoneQrTest(LedgerTestCase):
-    def test_start_page_shows_qr_for_this_page(self):
-        resp = self.client.get(reverse("ledger:scan_start"), secure=True)
-        self.assertContains(resp, "Open on your phone")
+class PhoneOnlyCameraTest(ScanViewsBase):
+    def test_desktop_gets_qr_of_this_session_instead_of_camera(self):
+        session = self.start()
+        camera = reverse("ledger:scan_camera", args=[session.uuid])
+        resp = self.client.get(camera, HTTP_USER_AGENT=DESKTOP, secure=True)
+        self.assertContains(resp, "Continue on your phone")
         self.assertContains(resp, "<svg")
-        self.assertContains(resp, "https://testserver/scan/")
+        self.assertContains(resp, f"https://testserver{camera}")
+        self.assertNotContains(resp, "ledger/scan.js")
+        self.assertContains(resp, reverse("ledger:scan_review", args=[session.uuid]))
         self.assertNotContains(resp, "needs HTTPS")
 
-    def test_plain_http_warns_camera_needs_https(self):
-        resp = self.client.get(reverse("ledger:scan_start"))
-        self.assertContains(resp, "http://testserver/scan/")
+    def test_desktop_qr_warns_when_not_https(self):
+        session = self.start()
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]), HTTP_USER_AGENT=DESKTOP)
         self.assertContains(resp, "needs HTTPS")
+
+    def test_android_phone_gets_the_camera(self):
+        session = self.start()
+        android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36"
+        resp = self.client.get(reverse("ledger:scan_camera", args=[session.uuid]), HTTP_USER_AGENT=android)
+        self.assertContains(resp, "ledger/scan.js")
+
+    def test_start_page_button_matches_device(self):
+        url = reverse("ledger:scan_start")
+        self.assertContains(self.client.get(url), "Open camera")
+        desktop = self.client.get(url, HTTP_USER_AGENT=DESKTOP)
+        self.assertContains(desktop, "Start and continue on phone")
+        self.assertNotContains(desktop, "Open on your phone")
 
 
 class ScanUuidTest(ScanViewsBase):
