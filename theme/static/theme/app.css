@@ -357,11 +357,7 @@ code { font-family: var(--mono); font-size: 13px; color: var(--accent-hi); }
 .scan-stage { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; overflow: hidden; }
 .scan-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .scan-guide { position: relative; width: min(64vw, 300px); aspect-ratio: 63 / 88; border-radius: 14px; border: 2px solid rgba(236, 232, 223, .7); box-shadow: 0 0 0 100vmax rgba(10, 10, 13, .55); display: flex; align-items: center; justify-content: center; }
-.scan-guide.is-still { border-color: var(--ok); }
-.scan-guide.is-busy { border-color: var(--accent); }
-.scan-spinner { width: 36px; height: 36px; border-radius: 50%; border: 3px solid rgba(236, 232, 223, .3); border-top-color: var(--accent); animation: scan-spin .8s linear infinite; }
-@keyframes scan-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .scan-spinner { animation-duration: 3s; } }
+.scan-guide.is-busy { border-color: var(--accent); border-style: dashed; }
 .scan-help { position: relative; margin: 0; font-size: 13px; color: var(--text-3); text-align: center; padding: 0 16px; }
 .scan-toast { margin: 0 12px 12px; padding: 12px; border-radius: 14px; background: var(--ok-bg); border: 1px solid #2F4A3A; display: flex; align-items: center; gap: 12px; }
 .scan-toast.is-error { background: var(--warn-bg); border-color: #4A3A24; }
@@ -370,7 +366,9 @@ code { font-family: var(--mono); font-size: 13px; color: var(--accent-hi); }
 .scan-toast.is-error .scan-toast-state { color: var(--warn); }
 .scan-toast-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scan-toast-actions { display: flex; flex-direction: column; gap: 6px; }
+.scan-toast-actions form { margin: 0; }
 .scan-toast-actions [aria-pressed="true"] { border-color: var(--accent); color: var(--accent-hi); }
 .scan-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 20px max(24px, env(safe-area-inset-bottom)); }
+.scan-shutter[disabled] { opacity: .5; }
 .scan-shutter { width: 76px; height: 76px; border-radius: 999px; border: 4px solid var(--text); background: transparent; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .scan-shutter span { width: 58px; height: 58px; border-radius: 999px; background: var(--text); color: var(--on-accent); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }

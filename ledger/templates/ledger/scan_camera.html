@@ -11,9 +11,7 @@
 </head>
 <body class="scan-body">
 <main class="scan-cam" id="scan"
-      data-capture-url="{% url 'ledger:scan_capture' session.pk %}"
-      data-line-url="{% url 'ledger:scan_line_update' 0 %}"
-      data-review-url="{% url 'ledger:scan_review' session.pk %}">
+      data-capture-url="{% url 'ledger:scan_capture' session.pk %}">
   {% csrf_token %}
   <div class="scan-top">
     <a class="scan-round" href="{% url 'ledger:scan_review' session.pk %}" aria-label="Close and review">
@@ -28,27 +26,17 @@
 
   <div class="scan-stage">
     <video class="scan-video" playsinline muted autoplay></video>
-    <div class="scan-guide" data-guide><span class="scan-spinner" hidden data-spinner></span></div>
-    <p class="scan-help" data-help>Frame the whole card, then move to the next</p>
+    <div class="scan-guide" data-guide></div>
+    <p class="scan-help" data-help>Frame the whole card and tap the shutter</p>
   </div>
 
-  <div class="scan-toast" data-toast{% if not last %} hidden{% endif %} role="status" aria-live="polite">
-    <div class="scan-toast-text">
-      <span class="scan-toast-state" data-toast-state>{% if last %}Last added · {{ last.quantity }} {{ last.quantity|pluralize:"copy,copies" }}{% endif %}</span>
-      <span class="scan-toast-name" data-toast-name>{{ last.blueprint.name }}</span>
-      <span class="mono sub" data-toast-meta>{% if last %}{{ last.blueprint.expansion.code|upper }} {{ last.blueprint.collector_number }} · {{ last.condition }} · {{ last.language }}{% endif %}</span>
-    </div>
-    <div class="scan-toast-actions">
-      <button type="button" class="btn btn-sm" data-foil aria-pressed="{% if last.foil %}true{% else %}false{% endif %}" data-line="{{ last.pk|default:'' }}">Foil</button>
-      <button type="button" class="btn btn-sm btn-ghost" data-undo data-line="{{ last.pk|default:'' }}">Undo</button>
-    </div>
-  </div>
+  {% include "ledger/includes/scan_toast.html" %}
 
   <div class="scan-bottom">
     <a class="btn" href="{% url 'ledger:scan_search' session.pk %}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search
     </a>
-    <button type="button" class="scan-shutter" data-shutter aria-label="Capture now (auto mode on)"><span>AUTO</span></button>
+    <button type="button" class="scan-shutter" data-shutter aria-label="Take photo" disabled><span></span></button>
     <a class="btn btn-primary" href="{% url 'ledger:scan_review' session.pk %}">Review</a>
   </div>
 </main>

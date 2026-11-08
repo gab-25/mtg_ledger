@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -34,25 +34,6 @@ def _next(request, default):
     if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
         return nxt
     return default
-
-
-def _wants_json(request):
-    return "application/json" in request.headers.get("Accept", "")
-
-
-def _line_json(line):
-    bp = line.blueprint
-    return {
-        "id": line.pk,
-        "name": bp.name if bp else "",
-        "set_code": bp.expansion.code.upper() if bp else "",
-        "number": bp.collector_number if bp else "",
-        "condition": line.condition,
-        "language": line.language,
-        "foil": line.foil,
-        "quantity": line.quantity,
-        "image_url": bp.image_url if bp else "",
-    }
 
 
 def _search_expansion(request, session):
@@ -129,8 +110,18 @@ def scan_camera(request, pk):
     return render(request, "ledger/scan_camera.html", {
         "session": session,
         "count": _count(session),
-        "last": session.lines.filter(needs_confirmation=False).select_related("blueprint__expansion").first(),
+        "line": session.lines.filter(needs_confirmation=False).select_related("blueprint__expansion").first(),
+        "state": "Last added",
     })
+
+
+def _toast(request, session, *, line=None, state="", error=False, status=200):
+    """The camera page's last-card box as an HTML fragment; the running count travels in a header."""
+    resp = render(request, "ledger/includes/scan_toast.html", {
+        "session": session, "line": line, "state": state, "error": error,
+    }, status=status)
+    resp["X-Scan-Count"] = str(_count(session))
+    return resp
 
 
 @login_required
@@ -138,19 +129,21 @@ def scan_camera(request, pk):
 def scan_capture(request, pk):
     session = _open_session(pk)
     if session is None:
-        return JsonResponse({"status": "error", "message": "This session is closed."}, status=409)
+        resp = HttpResponse(status=204)
+        resp["X-Scan-Redirect"] = reverse("ledger:collection")
+        return resp
     frame = request.FILES.get("frame")
     capture_id = request.POST.get("capture_id", "")[:64]
     if frame is None or frame.size > MAX_FRAME_BYTES:
-        return JsonResponse({"status": "error", "message": "Missing or oversized photo."}, status=400)
+        return _toast(request, session, state="Missing or oversized photo — try again", error=True, status=400)
 
     capture, created = scan.reserve_capture(session, capture_id) if capture_id else (None, True)
     if not created:
         if not capture.done:  # the first upload of this photo is still being recognised
-            return JsonResponse({"status": "pending", "count": _count(session)}, status=202)
-        done, merged = capture.line, False
-        if done is None:  # recognised, then undone or removed
-            return JsonResponse({"status": "duplicate", "count": _count(session)})
+            return _toast(request, session, state="Still recognising the previous photo…", status=202)
+        if capture.line is None:  # recognised, then undone or removed
+            return _toast(request, session, state="Already handled")
+        done = capture.line
     else:
         image = frame.read()
         try:
@@ -158,22 +151,22 @@ def scan_capture(request, pk):
                 rec = model.recognize_card(image)
             with services.make_client() as client:
                 found = recognition.match(client, rec, session.expansion)
-                done, merged = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
-        except (OpenRouterError, CardTraderError) as exc:
+                done, _ = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
+        except (OpenRouterError, CardTraderError):
             scan.release_capture(capture)
-            return JsonResponse({"status": "error", "message": str(exc)}, status=502)
+            return _toast(request, session, state="Couldn't recognise the card — take the photo again",
+                          error=True, status=502)
         except Exception:
             scan.release_capture(capture)
             raise
 
-    count = _count(session)
     if done.needs_confirmation:
         camera = reverse("ledger:scan_camera", args=[session.pk])
-        return JsonResponse({
-            "status": "uncertain", "line_id": done.pk, "count": count,
-            "resolve_url": f"{reverse('ledger:scan_resolve', args=[done.pk])}?next={camera}",
-        })
-    return JsonResponse({"status": "added", "line": _line_json(done), "merged": merged, "count": count})
+        resp = HttpResponse(status=204)
+        resp["X-Scan-Redirect"] = f"{reverse('ledger:scan_resolve', args=[done.pk])}?next={camera}"
+        return resp
+    copies = "copy" if done.quantity == 1 else "copies"
+    return _toast(request, session, line=done, state=f"Added · {done.quantity} {copies}")
 
 
 @login_required
@@ -200,8 +193,6 @@ def scan_line_update(request, pk):
         if "for_sale" in post:
             changes["for_sale"] = {"1": True, "0": False}.get(post["for_sale"])
         line = scan.update_line(line, **changes)
-    if _wants_json(request):
-        return JsonResponse({"ok": True, "count": _count(session), "line_id": line.pk if line else None})
     return redirect(_next(request, reverse("ledger:scan_review", args=[session.pk])))
 
 

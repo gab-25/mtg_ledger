@@ -79,32 +79,36 @@ class ScanViewsTest(LedgerTestCase):
         self.assertContains(resp, reverse("ledger:scan_capture", args=[session.pk]))
         self.assertContains(resp, "ledger/scan.js")
 
-    def test_capture_added_json(self):
-        data = self.capture(self.start()).json()
-        self.assertEqual((data["status"], data["count"], data["merged"]), ("added", 1, False))
-        self.assertEqual((data["line"]["name"], data["line"]["number"], data["line"]["language"]),
-                         ("Counterspell", "45", "IT"))
+    def test_capture_returns_toast_fragment(self):
+        resp = self.capture(self.start())
+        self.assertEqual(resp["X-Scan-Count"], "1")
+        self.assertTemplateUsed(resp, "ledger/includes/scan_toast.html")
+        self.assertNotIn(b"<html", resp.content)
+        self.assertContains(resp, "Added · 1 copy")
+        self.assertContains(resp, "Counterspell")
+        self.assertContains(resp, "DMR 45 · NM · IT")
 
     def test_capture_retry_same_id(self):
         session = self.start()
         self.capture(session, "same")
-        self.assertEqual(self.capture(session, "same").json()["count"], 1)
+        self.assertEqual(self.capture(session, "same")["X-Scan-Count"], "1")
 
     def test_capture_openrouter_error_502(self):
         session = self.start()
         self.recognizer.error = OpenRouterError("down")
         resp = self.capture(session)
         self.assertEqual(resp.status_code, 502)
-        self.assertEqual(resp.json()["status"], "error")
+        self.assertContains(resp, "Couldn&#x27;t recognise", status_code=502)
         self.assertEqual(ScanLine.objects.count(), 0)
 
     def test_capture_uncertain_then_resolve(self):
         session = self.start()
         self.recognizer.result = Recognition(name="Counterspell", language="")
-        data = self.capture(session).json()
-        self.assertEqual(data["status"], "uncertain")
-        line = ScanLine.objects.get(pk=data["line_id"])
-        page = self.client.get(data["resolve_url"])
+        resp = self.capture(session)
+        line = ScanLine.objects.get(session=session)
+        self.assertTrue(line.needs_confirmation)
+        self.assertIn(reverse("ledger:scan_resolve", args=[line.pk]), resp["X-Scan-Redirect"])
+        page = self.client.get(resp["X-Scan-Redirect"])
         self.assertContains(page, "Which one is it?")
         self.assertContains(page, "Counterspell")
         frame = self.client.get(reverse("ledger:scan_frame", args=[line.pk]))
@@ -123,15 +127,18 @@ class ScanViewsTest(LedgerTestCase):
         self.client.post(url, {"blueprint": 1201, "language": "EN"})
         self.assertEqual(ScanLine.objects.get(session=session).quantity, 1)
 
-    def test_line_update_json_and_undo(self):
+    def test_toast_foil_and_undo_forms(self):
         session = self.start()
-        line_id = self.capture(session).json()["line"]["id"]
-        url = reverse("ledger:scan_line_update", args=[line_id])
-        resp = self.client.post(url, {"foil": "1"}, HTTP_ACCEPT="application/json")
-        self.assertEqual(resp.json(), {"ok": True, "count": 1, "line_id": line_id})
-        self.assertTrue(ScanLine.objects.get(pk=line_id).foil)
-        resp = self.client.post(url, {"undo": "1"}, HTTP_ACCEPT="application/json")
-        self.assertEqual(resp.json()["count"], 0)
+        self.capture(session)
+        line = ScanLine.objects.get(session=session)
+        camera = reverse("ledger:scan_camera", args=[session.pk])
+        url = reverse("ledger:scan_line_update", args=[line.pk])
+        page = self.client.get(camera)
+        self.assertContains(page, f'action="{url}"')
+        self.assertRedirects(self.client.post(url, {"foil": "1", "next": camera}), camera)
+        self.assertTrue(ScanLine.objects.get(pk=line.pk).foil)
+        self.client.post(url, {"undo": "1", "next": camera})
+        self.assertFalse(ScanLine.objects.filter(pk=line.pk).exists())
 
     def test_review_threshold_and_save(self):
         session = self.start()
@@ -171,8 +178,9 @@ class ReviewFixesViewsTest(ScanViewsTest):
         session = self.start()
         self.capture(session, "a")
         self.capture(session, "b")
-        data = self.capture(session, "b").json()
-        self.assertEqual((data["status"], data["count"]), ("added", 2))
+        resp = self.capture(session, "b")
+        self.assertEqual(resp["X-Scan-Count"], "2")
+        self.assertEqual(ScanLine.objects.get(session=session).quantity, 2)
         self.assertEqual(self.recognizer_calls, 2)
 
     def test_capture_in_progress_is_not_reprocessed(self):  # I1
@@ -181,7 +189,7 @@ class ReviewFixesViewsTest(ScanViewsTest):
         session = self.start()
         ScanCapture.objects.create(session=session, capture_id="busy")
         resp = self.capture(session, "busy")
-        self.assertEqual((resp.status_code, resp.json()["status"]), (202, "pending"))
+        self.assertContains(resp, "Still recognising", status_code=202)
         self.assertEqual(self.recognizer_calls, 0)
 
     def test_failed_capture_can_be_retried_with_same_id(self):  # I1
@@ -189,10 +197,18 @@ class ReviewFixesViewsTest(ScanViewsTest):
         self.recognizer.error = OpenRouterError("down")
         self.assertEqual(self.capture(session, "x").status_code, 502)
         self.recognizer.error = None
-        self.assertEqual(self.capture(session, "x").json()["status"], "added")
+        self.assertContains(self.capture(session, "x"), "Added · 1 copy")
 
     def test_search_other_expansion_loads_it(self):  # I2 / I3
         session = self.start()  # DMR locked
         url = reverse("ledger:scan_search", args=[session.pk])
         resp = self.client.get(url, {"q": "sheoldred", "set": "dmu"})
         self.assertContains(resp, "Sheoldred, the Apocalypse")
+
+    def test_capture_on_closed_session_sends_phone_to_collection(self):
+        session = self.start()
+        session.status = ScanSession.Status.SAVED
+        session.save()
+        resp = self.capture(session)
+        self.assertEqual(resp["X-Scan-Redirect"], reverse("ledger:collection"))
+        self.assertEqual(self.recognizer_calls, 0)
