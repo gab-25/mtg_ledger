@@ -102,7 +102,7 @@ your own devices can reach.
    the phone while testing.
 2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
 
-Then run `scripts/dev-phone.sh` (options: `PORT`, default 8001, and `POSTGRES_DB`, default `mtg_ledger_scan`). It
+Then run `scripts/dev-phone.sh` (options: `PORT`, default 8000, and `POSTGRES_DB`, default `mtg_ledger_scan`). It
 checks Tailscale, creates and migrates the database, sets the Django host/CSRF/proxy variables, publishes the server
 with `tailscale serve` and removes that rule on Ctrl+C. If `tailscale serve` is refused, allow your user once with
 `sudo tailscale set --operator=$USER`.
@@ -111,7 +111,7 @@ The same steps by hand:
 
 3. Expose the development server on the tailnet:
    ```bash
-   tailscale serve --https=443 8001
+   tailscale serve --https=443 8000
    ```
    It prints the address, e.g. `https://my-pc.my-tailnet.ts.net`.
 4. Start Django on that port, trusting the Tailscale proxy:
@@ -119,7 +119,7 @@ The same steps by hand:
    export DJANGO_ALLOWED_HOSTS=.ts.net,localhost
    export DJANGO_CSRF_TRUSTED_ORIGINS=https://*.ts.net
    export DJANGO_BEHIND_HTTPS_PROXY=true
-   uv run python manage.py runserver 8001
+   uv run python manage.py runserver 8000
    ```
 5. Open the `ts.net` address on the computer, connect OpenRouter and CardTrader in **Profile and settings**, start a
    session in **Scan cards** and scan the QR code with the phone.

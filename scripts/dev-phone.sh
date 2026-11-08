@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the development server reachable from your phone over HTTPS through Tailscale.
 #
-#   scripts/dev-phone.sh            # port 8001, database mtg_ledger_scan
-#   PORT=8002 POSTGRES_DB=other scripts/dev-phone.sh
+#   scripts/dev-phone.sh            # port 8000, database mtg_ledger_scan
+#   PORT=8001 POSTGRES_DB=other scripts/dev-phone.sh
 #
 # Needs: Tailscale running on this computer and on the phone (same account), MagicDNS and
 # HTTPS Certificates enabled in the Tailscale admin console, PostgreSQL reachable with the
@@ -11,7 +11,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PORT="${PORT:-8001}"
+PORT="${PORT:-8000}"
 export POSTGRES_DB="${POSTGRES_DB:-mtg_ledger_scan}"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -29,6 +29,11 @@ print(d.get("BackendState", ""), (d.get("Self") or {}).get("DNSName", "").rstrip
 [[ "$backend" == "Running" ]] || die "tailscale is '$backend': connect it with 'sudo tailscale up'."
 [[ "$dns" != "-" ]] || die "this machine has no Tailscale DNS name: enable MagicDNS in the admin console."
 [[ "$certs" -gt 0 ]] || die "HTTPS certificates are off: enable 'HTTPS Certificates' in the Tailscale admin console (DNS page)."
+
+# Fail early with a clear message if something (another runserver, a container) already uses the port.
+if ! python3 -c 'import socket, sys; s = socket.socket(); s.bind(("127.0.0.1", int(sys.argv[1])))' "$PORT" 2>/dev/null; then
+  die "port $PORT is already in use: stop what is listening there, or run with PORT=<another port>."
+fi
 
 # A separate database, so another checkout sharing the same PostgreSQL is not migrated by this branch.
 uv run python - <<'PY'
