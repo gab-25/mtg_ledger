@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Run the development server reachable from your phone over HTTPS through Tailscale.
+#
+#   scripts/dev-phone.sh            # port 8001, database mtg_ledger_scan
+#   PORT=8002 POSTGRES_DB=other scripts/dev-phone.sh
+#
+# Needs: Tailscale running on this computer and on the phone (same account), MagicDNS and
+# HTTPS Certificates enabled in the Tailscale admin console, PostgreSQL reachable with the
+# POSTGRES_* settings. Ctrl+C stops Django and removes the Tailscale serve rule.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+PORT="${PORT:-8001}"
+export POSTGRES_DB="${POSTGRES_DB:-mtg_ledger_scan}"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+command -v tailscale >/dev/null || die "tailscale is not installed (https://tailscale.com/download)."
+command -v uv >/dev/null || die "uv is not installed."
+
+status_json="$(tailscale status --json 2>/dev/null)" || die "tailscale is not running: start it with 'sudo tailscale up'."
+read -r backend dns certs < <(python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d.get("BackendState", ""), (d.get("Self") or {}).get("DNSName", "").rstrip(".") or "-", len(d.get("CertDomains") or []))
+' <<<"$status_json")
+
+[[ "$backend" == "Running" ]] || die "tailscale is '$backend': connect it with 'sudo tailscale up'."
+[[ "$dns" != "-" ]] || die "this machine has no Tailscale DNS name: enable MagicDNS in the admin console."
+[[ "$certs" -gt 0 ]] || die "HTTPS certificates are off: enable 'HTTPS Certificates' in the Tailscale admin console (DNS page)."
+
+# A separate database, so another checkout sharing the same PostgreSQL is not migrated by this branch.
+uv run python - <<'PY'
+import os
+import psycopg
+from django.conf import settings
+import django
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
+db = settings.DATABASES["default"]
+params = dict(host=db["HOST"], port=db["PORT"], user=db["USER"], password=db["PASSWORD"], autocommit=True)
+with psycopg.connect(dbname="postgres", **params) as conn:
+    if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", [db["NAME"]]).fetchone():
+        conn.execute(f'CREATE DATABASE "{db["NAME"]}"')
+        print(f"created database {db['NAME']}")
+PY
+uv run python manage.py migrate --noinput
+
+export DJANGO_ALLOWED_HOSTS="${dns},localhost,127.0.0.1"
+export DJANGO_CSRF_TRUSTED_ORIGINS="https://${dns}"
+export DJANGO_BEHIND_HTTPS_PROXY=true
+
+if ! tailscale serve --bg --yes --https=443 "http://127.0.0.1:${PORT}" >/dev/null; then
+  die "tailscale serve failed. If it is a permission error, allow your user once with: sudo tailscale set --operator=\$USER"
+fi
+cleanup() { tailscale serve --https=443 off >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+cat <<EOF
+
+  MTG Ledger is on your tailnet:  https://${dns}
+  Database: ${POSTGRES_DB}   (create a user with: POSTGRES_DB=${POSTGRES_DB} uv run python manage.py createsuperuser)
+
+  Open that address on the computer, connect OpenRouter and CardTrader in Profile and settings,
+  start a session in Scan cards and scan the QR code with the phone (Tailscale on).
+  Ctrl+C stops everything.
+
+EOF
+
+uv run python manage.py runserver "127.0.0.1:${PORT}"

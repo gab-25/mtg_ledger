@@ -101,6 +101,14 @@ your own devices can reach.
 1. Install Tailscale on the computer and on the phone, signed in with the same account, and keep it connected on
    the phone while testing.
 2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
+
+Then run `scripts/dev-phone.sh` (options: `PORT`, default 8001, and `POSTGRES_DB`, default `mtg_ledger_scan`). It
+checks Tailscale, creates and migrates the database, sets the Django host/CSRF/proxy variables, publishes the server
+with `tailscale serve` and removes that rule on Ctrl+C. If `tailscale serve` is refused, allow your user once with
+`sudo tailscale set --operator=$USER`.
+
+The same steps by hand:
+
 3. Expose the development server on the tailnet:
    ```bash
    tailscale serve --https=443 8001
