@@ -219,3 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 staticfiles/
+
+# Superpowers design specs and plans (local only)
+docs/superpowers/
