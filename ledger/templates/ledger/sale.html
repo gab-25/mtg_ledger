@@ -1,0 +1,59 @@
+{% extends "theme/base.html" %}
+{% block title %}For sale{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow">CardTrader listings</div>
+    <h1>For sale</h1>
+  </div>
+  <div class="actions">
+    <form method="post" action="{% url 'ledger:match_prices' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn">Match market prices</button>
+    </form>
+    <form method="post" action="{% url 'ledger:publish' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary"{% if not stats.to_publish %} disabled{% endif %}>Publish {{ stats.to_publish }} change{{ stats.to_publish|pluralize }}</button>
+    </form>
+  </div>
+</header>
+
+<section class="stats" aria-label="Sales summary">
+  <div class="stat"><div class="stat-label">Active listings</div><div class="stat-value">{{ stats.active }}</div></div>
+  <div class="stat"><div class="stat-label">Listed value</div><div class="stat-value accent">€{{ stats.value|floatformat:"0g" }}</div></div>
+  <div class="stat"><div class="stat-label">Sold this month</div><div class="stat-value">{{ stats.sold_month }}</div></div>
+  <div class="stat"><div class="stat-label">To publish</div><div class="stat-value{% if stats.to_publish %} warn{% endif %}">{{ stats.to_publish }}</div></div>
+</section>
+
+<nav class="filters" aria-label="Filter by status">
+  <a class="pill" href="{% url 'ledger:sale' %}"{% if not status %} aria-current="true"{% endif %}>All</a>
+  {% for value, label in statuses %}
+  <a class="pill" href="?status={{ value }}"{% if status == value %} aria-current="true"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<section class="sale-grid" aria-label="Cards for sale">
+  {% for c in cards %}
+  <article class="sale-card">
+    <div class="sale-art">
+      <span class="sale-art-name" aria-hidden="true">{{ c.l.item.card.name }}</span>
+      <span class="pip" style="background: {{ c.pip }}"></span>
+      <span class="badge badge-{{ c.badge.tone }}">{{ c.badge.label }}</span>
+    </div>
+    <div class="sale-body">
+      <div>
+        <div class="sale-name">{{ c.l.item.card.name }}</div>
+        <div class="sale-meta">{{ c.l.item.card.set_code }} · {{ c.l.item.condition }} · {{ c.l.item.language }}{% if c.l.item.foil %} · FOIL{% endif %}{% if c.l.quantity > 1 %} · ×{{ c.l.quantity }}{% endif %}</div>
+      </div>
+      <div class="price-row">
+        <div><div class="price-label">Your price</div><div class="price-main">€{{ c.l.price|floatformat:"2g" }}</div></div>
+        <div style="text-align:right"><div class="price-label">Market</div><div class="price-market">{% if c.l.market_price is not None %}€{{ c.l.market_price|floatformat:"2g" }}{% else %}—{% endif %}</div></div>
+      </div>
+      <a class="btn btn-block" href="{% url 'ledger:listing_edit' c.l.item.pk %}">Edit listing<span class="sr-only"> for {{ c.l.item.card.name }}</span></a>
+    </div>
+  </article>
+  {% empty %}
+  <p class="empty" style="grid-column: 1 / -1">No listings yet. Open a card in your <a href="{% url 'ledger:collection' %}">collection</a> and choose “List for sale”.</p>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,23 @@
+from django.urls import path
+
+from . import views
+
+app_name = "ledger"
+
+urlpatterns = [
+    path("", views.collection, name="collection"),
+    path("cards/add/", views.item_create, name="item_create"),
+    path("cards/<int:pk>/", views.item_edit, name="item_edit"),
+    path("cards/<int:pk>/delete/", views.item_delete, name="item_delete"),
+    path("cards/import/", views.import_csv, name="import_csv"),
+    path("cards/export/", views.export_csv, name="export_csv"),
+    path("sale/", views.sale, name="sale"),
+    path("sale/<int:item_pk>/", views.listing_edit, name="listing_edit"),
+    path("sale/<int:item_pk>/delete/", views.listing_delete, name="listing_delete"),
+    path("sale/publish/", views.publish, name="publish"),
+    path("sale/match-prices/", views.match_prices, name="match_prices"),
+    path("sync/", views.sync, name="sync"),
+    path("sync/all/", views.sync_all, name="sync_all"),
+    path("sync/conflicts/<int:pk>/resolve/", views.resolve, name="resolve"),
+    path("sync/services/<int:pk>/", views.service_settings, name="service_settings"),
+]

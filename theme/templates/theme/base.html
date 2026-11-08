@@ -1,0 +1,54 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}MTG Ledger{% endblock %} · MTG Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'theme/app.css' %}">
+</head>
+<body>
+{% block body %}
+<div class="shell">
+  <nav class="sidebar" aria-label="Main navigation">
+    <a class="brand" href="{% url 'ledger:collection' %}">
+      {% include "theme/includes/logo.svg" %}
+      <span class="brand-name">MTG Ledger</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="{% url 'ledger:collection' %}"{% if nav == 'collection' %} aria-current="page"{% endif %}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="9" rx="1"/><rect x="3" y="15" width="7" height="6" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/></svg>Collection</a>
+      <a class="nav-link" href="{% url 'ledger:sale' %}"{% if nav == 'sale' %} aria-current="page"{% endif %}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 12l-8 8-9-9V3h8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>For sale</a>
+      <a class="nav-link" href="{% url 'ledger:sync' %}"{% if nav == 'sync' %} aria-current="page"{% endif %}>
+        {% include "theme/includes/sync_icon.svg" %}Sync{% if pending_changes %}<span class="nav-count">{{ pending_changes }}<span class="sr-only"> changes to publish</span></span>{% endif %}</a>
+    </div>
+    <div class="user-card">
+      <span class="avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
+      <div class="user-meta">
+        <div class="user-name">{{ user.get_full_name|default:user.get_username }}</div>
+        <a href="{% url 'password_change' %}">Profile and settings</a>
+      </div>
+      <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-ghost" aria-label="Log out" style="width:44px;padding:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </form>
+    </div>
+  </nav>
+
+  <main class="main">
+    {% if messages %}
+    <ul class="messages" role="status">
+      {% for message in messages %}<li class="message {{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}
+</body>
+</html>

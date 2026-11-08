@@ -1,0 +1,25 @@
+{% extends "theme/base.html" %}
+{% block title %}{{ service.name }} settings{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{% url 'ledger:sync' %}" style="color:inherit;text-decoration:none">Sync</a></div>
+    <h1>{{ service.name }}</h1>
+  </div>
+</header>
+
+<form method="post" class="panel">
+  {% csrf_token %}
+  <div class="form-grid">
+    {% include "theme/includes/field.html" with field=form.description %}
+    {% include "theme/includes/field.html" with field=form.direction %}
+    {% include "theme/includes/field.html" with field=form.api_token wide=True %}
+  </div>
+  <div class="form-actions">
+    <div class="group">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a class="btn btn-ghost" href="{% url 'ledger:sync' %}">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

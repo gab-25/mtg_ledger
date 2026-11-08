@@ -1,0 +1,5 @@
+<div class="field{% if field.field.widget.input_type == 'checkbox' %} check{% endif %}{% if wide %} wide{% endif %}">
+  {% if field.field.widget.input_type == 'checkbox' %}{{ field }}{{ field.label_tag }}{% else %}{{ field.label_tag }}{{ field }}{% endif %}
+  {% if field.help_text %}<span class="help">{{ field.help_text }}</span>{% endif %}
+  {% if field.errors %}<ul class="errors">{% for e in field.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+</div>

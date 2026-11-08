@@ -1,0 +1,164 @@
+from decimal import Decimal
+
+from django.db import models
+
+
+class Color(models.TextChoices):
+    WHITE = "W", "White"
+    BLUE = "U", "Blue"
+    BLACK = "B", "Black"
+    RED = "R", "Red"
+    GREEN = "G", "Green"
+    COLORLESS = "C", "Colorless"
+    MULTI = "M", "Multicolor"
+
+
+class Condition(models.TextChoices):
+    MINT = "M", "Mint"
+    NEAR_MINT = "NM", "Near Mint"
+    EXCELLENT = "EX", "Excellent"
+    GOOD = "GD", "Good"
+    LIGHT_PLAYED = "LP", "Light Played"
+    PLAYED = "PL", "Played"
+    POOR = "PO", "Poor"
+
+
+class Language(models.TextChoices):
+    EN = "EN", "English"
+    IT = "IT", "Italian"
+    DE = "DE", "German"
+    FR = "FR", "French"
+    ES = "ES", "Spanish"
+    PT = "PT", "Portuguese"
+    JP = "JP", "Japanese"
+    KO = "KO", "Korean"
+    ZHS = "ZHS", "Chinese (S)"
+    RU = "RU", "Russian"
+
+
+class Card(models.Model):
+    """A specific printing of a card (name + set)."""
+
+    name = models.CharField(max_length=200)
+    type_line = models.CharField(max_length=200, blank=True)
+    set_code = models.CharField(max_length=10)
+    color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
+
+    class Meta:
+        ordering = ["name", "set_code"]
+        constraints = [
+            models.UniqueConstraint(fields=["name", "set_code"], name="unique_card_printing"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.set_code})"
+
+
+class CollectionItem(models.Model):
+    """A stack of identical copies owned by the user."""
+
+    class Status(models.TextChoices):
+        COLLECTION = "collection", "In collection"
+        FOR_SALE = "sale", "For sale"
+        PENDING = "pending", "Sync pending"
+
+    card = models.ForeignKey(Card, on_delete=models.CASCADE, related_name="items")
+    condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
+    language = models.CharField(max_length=3, choices=Language.choices, default=Language.EN)
+    foil = models.BooleanField(default=False)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.DecimalField(
+        "Unit price", max_digits=10, decimal_places=2, default=Decimal("0.00")
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["card__name", "card__set_code"]
+
+    def __str__(self):
+        return f"{self.quantity}× {self.card} {self.condition} {self.language}"
+
+    @property
+    def total_value(self):
+        return self.price * self.quantity
+
+    @property
+    def status(self):
+        listing = getattr(self, "listing", None)
+        if listing is None or listing.status == Listing.Status.SOLD:
+            return self.Status.COLLECTION
+        if listing.status == Listing.Status.TO_PUBLISH:
+            return self.Status.PENDING
+        return self.Status.FOR_SALE
+
+
+class Listing(models.Model):
+    """A sale listing on CardTrader for a collection item."""
+
+    class Status(models.TextChoices):
+        PUBLISHED = "published", "Published"
+        TO_PUBLISH = "to_publish", "To publish"
+        SOLD = "sold", "Sold"
+
+    item = models.OneToOneField(CollectionItem, on_delete=models.CASCADE, related_name="listing")
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    market_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.TO_PUBLISH)
+    sold_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["item__card__name"]
+
+    def __str__(self):
+        return f"{self.item.card} @ {self.price}"
+
+
+class SyncService(models.Model):
+    name = models.CharField(max_length=80, unique=True)
+    description = models.CharField(max_length=200, blank=True)
+    direction = models.CharField(max_length=120, blank=True)
+    api_token = models.CharField(max_length=500, blank=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.name
+
+
+class SyncConflict(models.Model):
+    class Resolution(models.TextChoices):
+        OPEN = "open", "Open"
+        LEDGER = "ledger", "Kept Ledger"
+        REMOTE = "remote", "Kept remote"
+
+    service = models.ForeignKey(SyncService, on_delete=models.CASCADE, related_name="conflicts")
+    item = models.ForeignKey(CollectionItem, on_delete=models.CASCADE, related_name="conflicts")
+    field = models.CharField(max_length=40, blank=True, help_text="Listing field that differs, e.g. 'price'")
+    local_value = models.CharField(max_length=120)
+    remote_value = models.CharField(max_length=120)
+    resolution = models.CharField(max_length=8, choices=Resolution.choices, default=Resolution.OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.item.card}: {self.local_value} ≠ {self.remote_value}"
+
+
+class SyncLog(models.Model):
+    class Level(models.TextChoices):
+        OK = "ok", "OK"
+        WARNING = "warn", "Warning"
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    level = models.CharField(max_length=4, choices=Level.choices, default=Level.OK)
+    message = models.CharField(max_length=300)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return self.message
