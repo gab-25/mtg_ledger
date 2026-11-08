@@ -1,0 +1,36 @@
+{% extends "theme/base.html" %}
+{% block title %}Scan cards{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{% url 'ledger:collection' %}" style="color:inherit;text-decoration:none">Collection</a></div>
+    <h1>Scan cards</h1>
+  </div>
+</header>
+
+<form method="post" class="scan-panel">
+  {% csrf_token %}
+  <div class="field">
+    <label for="expansion">Expansion</label>
+    <select id="expansion" name="expansion" class="input">
+      <option value="">All expansions</option>
+      {% for e in expansions %}<option value="{{ e.pk }}"{% if e.pk == selected %} selected{% endif %}>{{ e }}</option>{% endfor %}
+    </select>
+    <p class="hint">Locking one expansion makes recognition faster and more accurate.</p>
+  </div>
+
+  <fieldset class="scan-box">
+    <legend class="eyebrow">Defaults</legend>
+    <span class="scan-label">Condition</span>
+    <div class="chips">
+      {% for code, label in conditions %}
+      <label class="chip"><input type="radio" name="condition" value="{{ code }}"{% if code == condition %} checked{% endif %}><span title="{{ label }}">{{ code }}</span></label>
+      {% endfor %}
+    </div>
+    <p class="hint">Applies to every card in the session. Language and foil are read from each card.</p>
+  </fieldset>
+
+  <button type="submit" class="btn btn-primary btn-wide">Open camera</button>
+  <p class="hint" style="text-align:center">Cards stay in a draft until you save them.</p>
+</form>
+{% endblock %}

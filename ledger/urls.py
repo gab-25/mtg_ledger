@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import scan_views, views
 
 app_name = "ledger"
 
@@ -11,6 +11,14 @@ urlpatterns = [
     path("cards/<int:pk>/delete/", views.item_delete, name="item_delete"),
     path("cards/import/", views.import_csv, name="import_csv"),
     path("cards/export/", views.export_csv, name="export_csv"),
+    path("scan/", scan_views.scan_start, name="scan_start"),
+    path("scan/<int:pk>/", scan_views.scan_camera, name="scan_camera"),
+    path("scan/<int:pk>/capture/", scan_views.scan_capture, name="scan_capture"),
+    path("scan/<int:pk>/search/", scan_views.scan_search, name="scan_search"),
+    path("scan/<int:pk>/review/", scan_views.scan_review, name="scan_review"),
+    path("scan/lines/<int:pk>/", scan_views.scan_line_update, name="scan_line_update"),
+    path("scan/lines/<int:pk>/resolve/", scan_views.scan_resolve, name="scan_resolve"),
+    path("scan/lines/<int:pk>/frame.jpg", scan_views.scan_frame, name="scan_frame"),
     path("sale/", views.sale, name="sale"),
     path("sale/<int:item_pk>/", views.listing_edit, name="listing_edit"),
     path("sale/<int:item_pk>/delete/", views.listing_delete, name="listing_delete"),
