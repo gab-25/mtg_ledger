@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from . import services
@@ -148,6 +148,8 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
     }
 
 
+# Tests never use the real keys from the environment or a local .env file.
+@override_settings(CARDTRADER_API_TOKEN="", OPENROUTER_API_KEY="")
 class LedgerTestCase(TestCase):
     def setUp(self):
         cache.clear()
