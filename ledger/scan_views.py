@@ -142,7 +142,8 @@ def _missing_services():
     profile = reverse("accounts:profile")
     missing = []
     if not services.openrouter_key():
-        missing.append(("OpenRouter is not connected: card recognition needs its API key.", f"{profile}#openrouter"))
+        missing.append(("OpenRouter is not configured: card recognition needs the OPENROUTER_API_KEY "
+                        "environment variable on the server.", ""))
     if not services.api_token():
         missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
                         f"{profile}#cardtrader"))

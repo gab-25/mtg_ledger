@@ -56,9 +56,12 @@ class ScanViewsBase(LedgerTestCase):
         self.client.defaults["HTTP_USER_AGENT"] = IPHONE
 
     def set_keys(self, *, openrouter, cardtrader):
-        for service, value in ((services.get_openrouter(), openrouter), (services.get_cardtrader(), cardtrader)):
-            service.api_token = value
-            service.save()
+        override = self.settings(OPENROUTER_API_KEY=openrouter)
+        override.enable()
+        self.addCleanup(override.disable)
+        service = services.get_cardtrader()
+        service.api_token = cardtrader
+        service.save()
 
     @property
     def recognizer_calls(self):
@@ -276,8 +279,9 @@ class ScanErrorMessagesTest(ScanViewsBase):
         session = self.start()
         self.set_keys(openrouter="", cardtrader="ct-token")
         resp = self.capture(session)
-        self.assertContains(resp, "OpenRouter is not connected", status_code=503)
-        self.assertContains(resp, reverse("accounts:profile") + "#openrouter", status_code=503)
+        self.assertContains(resp, "OpenRouter is not configured", status_code=503)
+        self.assertContains(resp, "OPENROUTER_API_KEY", status_code=503)
+        self.assertNotContains(resp, "#openrouter", status_code=503)
         self.assertEqual((self.recognizer_calls, ScanLine.objects.count()), (0, 0))
 
     def test_capture_without_cardtrader_token_says_so(self):
@@ -302,9 +306,10 @@ class ScanErrorMessagesTest(ScanViewsBase):
         with mock.patch.object(services, "make_client", side_effect=no_token):
             resp = self.client.get(reverse("ledger:scan_start"))
         self.assertNotContains(resp, "Could not load the expansions")
-        self.assertContains(resp, "OpenRouter is not connected")
+        self.assertContains(resp, "OpenRouter is not configured")
         self.assertContains(resp, "CardTrader is not connected")
-        self.assertContains(resp, reverse("accounts:profile") + "#openrouter")
+        self.assertNotContains(resp, "#openrouter")
+        self.assertContains(resp, reverse("accounts:profile") + "#cardtrader")
 
     def test_start_page_without_warnings_when_connected(self):
         resp = self.client.get(reverse("ledger:scan_start"))

@@ -11,7 +11,7 @@
 {% if missing %}
 <div class="scan-warnings">
   {% for message, link in missing %}
-  <p class="scan-warn" role="alert">{{ message }} <a href="{{ link }}">Connect it in Profile and settings</a>.</p>
+  <p class="scan-warn" role="alert">{{ message }}{% if link %} <a href="{{ link }}">Connect it in Profile and settings</a>.{% endif %}</p>
   {% endfor %}
 </div>
 {% endif %}
