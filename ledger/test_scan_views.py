@@ -6,6 +6,7 @@ from django.urls import reverse
 
 from . import catalog, services
 from .models import CollectionItem, Expansion, MarketPrice, ScanLine, ScanSession
+from .cardtrader import CardTraderError
 from .openrouter import OpenRouterError
 from .recognition import Recognition
 from .tests import LedgerTestCase
@@ -47,6 +48,12 @@ class ScanViewsBase(LedgerTestCase):
         price = mock.patch("ledger.pricing.price_for", return_value=Decimal("5.00"))
         price.start()
         self.addCleanup(price.stop)
+        self.set_keys(openrouter="or-key", cardtrader="ct-token")
+
+    def set_keys(self, *, openrouter, cardtrader):
+        for service, value in ((services.get_openrouter(), openrouter), (services.get_cardtrader(), cardtrader)):
+            service.api_token = value
+            service.save()
 
     @property
     def recognizer_calls(self):
@@ -240,3 +247,43 @@ class ScanUuidTest(ScanViewsBase):
         self.assertIn(str(line.uuid), reverse("ledger:scan_line_update", args=[line.uuid]))
         self.assertEqual(self.client.get(f"/scan/{session.pk}/").status_code, 404)
         self.assertContains(self.client.get(camera), str(line.uuid))
+
+
+class ScanErrorMessagesTest(ScanViewsBase):
+    def test_capture_without_openrouter_key_says_so(self):
+        session = self.start()
+        self.set_keys(openrouter="", cardtrader="ct-token")
+        resp = self.capture(session)
+        self.assertContains(resp, "OpenRouter is not connected", status_code=503)
+        self.assertContains(resp, reverse("accounts:profile") + "#openrouter", status_code=503)
+        self.assertEqual((self.recognizer_calls, ScanLine.objects.count()), (0, 0))
+
+    def test_capture_without_cardtrader_token_says_so(self):
+        session = self.start()
+        self.set_keys(openrouter="or-key", cardtrader="")
+        resp = self.capture(session)
+        self.assertContains(resp, "CardTrader is not connected", status_code=503)
+        self.assertContains(resp, reverse("accounts:profile") + "#cardtrader", status_code=503)
+        self.assertEqual(self.recognizer_calls, 0)
+
+    def test_capture_error_shows_the_reason(self):
+        session = self.start()
+        self.recognizer.error = OpenRouterError("OpenRouter failed (429): rate limited")
+        resp = self.capture(session)
+        self.assertContains(resp, "rate limited", status_code=502)
+        self.assertContains(resp, "take the photo again", status_code=502)
+
+    def test_start_page_warns_about_missing_keys(self):
+        self.set_keys(openrouter="", cardtrader="")
+        Expansion.objects.all().delete()
+        no_token = CardTraderError("CardTrader API token is not configured.")
+        with mock.patch.object(services, "make_client", side_effect=no_token):
+            resp = self.client.get(reverse("ledger:scan_start"))
+        self.assertNotContains(resp, "Could not load the expansions")
+        self.assertContains(resp, "OpenRouter is not connected")
+        self.assertContains(resp, "CardTrader is not connected")
+        self.assertContains(resp, reverse("accounts:profile") + "#openrouter")
+
+    def test_start_page_without_warnings_when_connected(self):
+        resp = self.client.get(reverse("ledger:scan_start"))
+        self.assertNotContains(resp, "is not connected")

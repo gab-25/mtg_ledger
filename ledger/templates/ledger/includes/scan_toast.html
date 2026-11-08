@@ -1,6 +1,7 @@
 <div class="scan-toast{% if error %} is-error{% endif %}" id="scan-toast" role="status" aria-live="polite"{% if not line and not state %} hidden{% endif %}>
   <div class="scan-toast-text">
     <span class="scan-toast-state">{{ state }}</span>
+    {% if help_url %}<a class="scan-toast-link" href="{{ help_url }}">Open Profile and settings</a>{% endif %}
     {% if line %}
     <span class="scan-toast-name">{{ line.blueprint.name }}</span>
     <span class="mono sub">{{ line.blueprint.expansion.code|upper }} {{ line.blueprint.collector_number }} · {{ line.condition }} · {{ line.language }}{% if line.foil %} · Foil{% endif %}</span>

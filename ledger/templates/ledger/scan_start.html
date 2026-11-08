@@ -8,6 +8,10 @@
   </div>
 </header>
 
+{% for message, link in missing %}
+<p class="scan-warn" role="alert">{{ message }} <a href="{{ link }}">Connect it in Profile and settings</a>.</p>
+{% endfor %}
+
 <div class="scan-start">
 <form method="post" class="scan-panel">
   {% csrf_token %}

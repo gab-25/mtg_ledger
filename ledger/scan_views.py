@@ -92,7 +92,7 @@ def scan_start(request):
                 messages.warning(request, f"Could not preload {expansion} from CardTrader: {exc}")
         return redirect("ledger:scan_camera", session.uuid)
 
-    if not Expansion.objects.exists():
+    if not Expansion.objects.exists() and services.api_token():
         try:
             with services.make_client() as client:
                 catalog.sync_expansions(client)
@@ -101,6 +101,7 @@ def scan_start(request):
     last = ScanSession.objects.order_by("-created_at", "-id").first()
     phone_url = request.build_absolute_uri(reverse("ledger:scan_start"))
     return render(request, "ledger/scan_start.html", {
+        "missing": _missing_services(),
         "phone_url": phone_url,
         "phone_qr": _qr_svg(phone_url),
         "phone_secure": request.is_secure(),
@@ -125,10 +126,22 @@ def scan_camera(request, uid):
     })
 
 
-def _toast(request, session, *, line=None, state="", error=False, status=200):
+def _missing_services():
+    """Connections the scan flow needs but are not configured: [(message, profile link)]."""
+    profile = reverse("accounts:profile")
+    missing = []
+    if not services.openrouter_key():
+        missing.append(("OpenRouter is not connected: card recognition needs its API key.", f"{profile}#openrouter"))
+    if not services.api_token():
+        missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
+                        f"{profile}#cardtrader"))
+    return missing
+
+
+def _toast(request, session, *, line=None, state="", error=False, status=200, help_url=""):
     """The camera page's last-card box as an HTML fragment; the running count travels in a header."""
     resp = render(request, "ledger/includes/scan_toast.html", {
-        "session": session, "line": line, "state": state, "error": error,
+        "session": session, "line": line, "state": state, "error": error, "help_url": help_url,
     }, status=status)
     resp["X-Scan-Count"] = str(_count(session))
     return resp
@@ -146,6 +159,10 @@ def scan_capture(request, uid):
     capture_id = request.POST.get("capture_id", "")[:64]
     if frame is None or frame.size > MAX_FRAME_BYTES:
         return _toast(request, session, state="Missing or oversized photo — try again", error=True, status=400)
+    missing = _missing_services()
+    if missing:
+        message, link = missing[0]
+        return _toast(request, session, state=message, error=True, status=503, help_url=link)
 
     capture, created = scan.reserve_capture(session, capture_id) if capture_id else (None, True)
     if not created:
@@ -162,9 +179,10 @@ def scan_capture(request, uid):
             with services.make_client() as client:
                 found = recognition.match(client, rec, session.expansion)
                 done, _ = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
-        except (OpenRouterError, CardTraderError):
+        except (OpenRouterError, CardTraderError) as exc:
             scan.release_capture(capture)
-            return _toast(request, session, state="Couldn't recognise the card — take the photo again",
+            reason = str(exc)[:160]
+            return _toast(request, session, state=f"Couldn't recognise the card ({reason}) — take the photo again",
                           error=True, status=502)
         except Exception:
             scan.release_capture(capture)
