@@ -138,7 +138,7 @@ class SyncService(models.Model):
     name = models.CharField(max_length=80, unique=True)
     description = models.CharField(max_length=200, blank=True)
     direction = models.CharField(max_length=120, blank=True)
-    api_token = models.CharField(max_length=500, blank=True)
+    api_token = models.TextField(blank=True)  # CardTrader tokens are long JWTs
     last_sync = models.DateTimeField(null=True, blank=True)
     orders_synced_at = models.DateTimeField(null=True, blank=True)
 
