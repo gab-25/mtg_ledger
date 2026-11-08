@@ -302,6 +302,11 @@ class Blueprint(models.Model):
     version = models.CharField(max_length=80, blank=True)
     rarity = models.CharField(max_length=40, blank=True)
     image_url = models.URLField(max_length=500, blank=True)
+    cm_price = models.ForeignKey(
+        "CardmarketPrice", null=True, blank=True, on_delete=models.DO_NOTHING, db_constraint=False,
+        related_name="blueprints", verbose_name="Cardmarket product",
+        help_text="First of the blueprint's Cardmarket ids; its price row may not exist",
+    )
 
     class Meta:
         ordering = ["expansion__name", "name"]
@@ -330,6 +335,28 @@ class MarketPrice(models.Model):
 
     def __str__(self):
         return f"{self.blueprint_ct_id} {self.language} {self.condition}{' foil' if self.foil else ''}: {self.price}"
+
+
+class CardmarketPrice(models.Model):
+    """Cardmarket price guide of one Cardmarket product (local copy of Cardmarket's public daily file)."""
+
+    id_product = models.PositiveIntegerField("Cardmarket product", primary_key=True)
+    low = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    trend = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg1 = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg7 = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg30 = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    low_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    trend_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg1_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg7_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    avg30_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    prices_date = models.DateTimeField(null=True, blank=True, help_text="createdAt of the price guide")
+
+    def __str__(self):
+        return f"Cardmarket {self.id_product}: {self.trend}"
 
 
 class ScanSession(models.Model):

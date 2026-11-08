@@ -24,6 +24,7 @@ urlpatterns = [
     path("sale/<int:item_pk>/delete/", views.listing_delete, name="listing_delete"),
     path("sale/publish/", views.publish, name="publish"),
     path("sale/match-prices/", views.match_prices, name="match_prices"),
+    path("cards/", views.cards, name="cards"),
     path("shipments/", views.shipments, name="shipments"),
     path("shipments/import/", views.orders_sync, name="orders_sync"),
     path("shipments/<int:pk>/", views.order_detail, name="order_detail"),

@@ -43,6 +43,7 @@ class FakeCardTrader:
         self.jobs = {}
         self.calls = []
         self.fail_blueprints = set()
+        self.fail_export = set()  # expansion ids whose /blueprints/export answers 500
         self.fail_marketplace = False
 
     def handler(self, request):
@@ -57,6 +58,8 @@ class FakeCardTrader:
         if path == "/expansions":
             return httpx.Response(200, json=self.expansions)
         if path == "/blueprints/export":
+            if int(params["expansion_id"]) in self.fail_export:
+                return httpx.Response(500, json={"error": "boom"})
             return httpx.Response(200, json=self.blueprints.get(int(params["expansion_id"]), []))
         if path == "/products/export":
             return httpx.Response(200, json=list(self.products.values()))

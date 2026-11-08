@@ -38,6 +38,7 @@ Run the whole stack (PostgreSQL + app built from the local `Dockerfile`) with Do
 
 ```bash
 docker compose up -d --build
+docker compose exec mtg_ledger python manage.py migrate
 docker compose exec mtg_ledger python manage.py createsuperuser
 ```
 
@@ -57,8 +58,9 @@ docker run -p 8000:8000 \
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
 reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
-`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
-Migrations run at container start (`docker-entrypoint.sh`) before any command.
+`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`).
+Migrations never run on their own at container start: run `python manage.py migrate` yourself after each upgrade
+(e.g. `docker compose exec mtg_ledger python manage.py migrate`, or a one-off container of the image with that command).
 
 ## CardTrader
 
@@ -75,6 +77,31 @@ Connect CardTrader from **Profile and settings → Connected services** (the tok
 Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/api/full/reference).
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
+
+## Card database and Cardmarket prices
+
+Every night the Ledger reloads its card database from CardTrader (every MTG expansion and every printing, i.e.
+blueprint) and Cardmarket's public price guide (low, trend, average and the 1/7/30-day averages, regular and foil).
+Each CardTrader blueprint carries its Cardmarket product id, which ties it to its price. Your cards are matched to a
+printing by their CardTrader blueprint, or else by set code + collector number; the sync logs how many cards have no
+printing. It needs the CardTrader API token (environment or Profile and settings) on the worker too.
+
+- **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
+  how many copies you own and the Cardmarket prices.
+- **Listing form**: the Cardmarket trend (foil trend for foil copies) is suggested next to the CardTrader market
+  price; "Use" copies it into the price field.
+
+The sync runs on a Celery worker (Redis broker). `sync_cardmarket` only queues it; schedule it every night after
+03:00 (Cardmarket regenerates the price guide around 02:45 CET) with the scheduler of your choice.
+
+```bash
+docker compose up -d redis
+uv run celery -A config worker --loglevel=info      # the worker
+uv run python manage.py sync_cardmarket             # queue a sync (outcome in Sync → Activity log)
+```
+
+With Docker Compose the `worker` and `redis` services start with the stack; queue a sync with
+`docker compose exec mtg_ledger python manage.py sync_cardmarket`.
 
 ## Scanning cards with the camera
 

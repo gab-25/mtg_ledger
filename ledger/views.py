@@ -1,17 +1,20 @@
+from urllib.parse import urlencode
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from . import services
+from . import cardmarket, services
 from .cardtrader import CardTraderError
+from .catalog import normalize_number
 from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm
-from .models import Card, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, CardmarketPrice, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
 from .presentation import COLOR_FILTERS, ORDER_TABS, item_badge, listing_badge, order_badge, pip
 
 PAGE_SIZE = 50
@@ -183,6 +186,36 @@ def sale(request):
 
 
 @login_required
+def cards(request):
+    """Search the card database (CardTrader catalog) by name, set, collector number and ownership."""
+    q = request.GET.get("q", "").strip()
+    set_code = request.GET.get("set", "").strip().lower()
+    number = normalize_number(request.GET.get("number", ""))
+    owned = request.GET.get("owned") == "1"
+    page = None
+    if q or set_code or number or owned:
+        owned_qty = cardmarket.owned_quantities()
+        printings = Blueprint.objects.select_related("expansion", "cm_price").order_by("name", "expansion__code")
+        if q:
+            printings = printings.filter(Q(name__icontains=q) | Q(expansion__code__iexact=q))
+        if set_code:
+            printings = printings.filter(expansion__code=set_code)
+        if number:
+            printings = printings.filter(collector_number=number)
+        if owned:
+            printings = printings.filter(ct_id__in=owned_qty)
+        page = Paginator(printings, PAGE_SIZE).get_page(request.GET.get("page"))
+        for bp in page:
+            bp.owned_qty = owned_qty.get(bp.ct_id)
+    params = {k: v for k, v in (("q", q), ("set", set_code), ("number", number), ("owned", "1" if owned else "")) if v}
+    return render(request, "ledger/cards.html", {
+        "nav": "cards", "q": q, "set_code": set_code, "number": number, "owned": owned, "page": page,
+        "query": urlencode(params),
+        "prices_date": CardmarketPrice.objects.aggregate(d=Max("prices_date"))["d"] if page is not None else None,
+    })
+
+
+@login_required
 def listing_edit(request, item_pk):
     item = get_object_or_404(CollectionItem.objects.select_related("card"), pk=item_pk)
     listing = getattr(item, "listing", None) or Listing(item=item, price=item.price, quantity=1)
@@ -203,7 +236,10 @@ def listing_edit(request, item_pk):
         listing.save()
         messages.success(request, f"Listing for {item.card.name} saved.")
         return redirect("ledger:sale")
-    return render(request, "ledger/listing_form.html", {"nav": "sale", "form": form, "item": item, "listing": listing})
+    return render(request, "ledger/listing_form.html", {
+        "nav": "sale", "form": form, "item": item, "listing": listing,
+        "cm_suggestion": cardmarket.suggested_price(item.card, item.foil),
+    })
 
 
 @login_required
