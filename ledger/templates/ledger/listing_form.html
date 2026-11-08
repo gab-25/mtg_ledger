@@ -1,0 +1,36 @@
+{% extends "theme/base.html" %}
+{% block title %}Listing · {{ item.card.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{% url 'ledger:sale' %}" style="color:inherit;text-decoration:none">For sale</a></div>
+    <h1>{{ item.card.name }}</h1>
+    <div class="sale-meta" style="margin-top:6px">{{ item.card.set_code }} · {{ item.condition }} · {{ item.language }}{% if item.foil %} · FOIL{% endif %} · {{ item.quantity }} owned</div>
+  </div>
+</header>
+
+<form method="post" class="panel" id="listing-form">
+  {% csrf_token %}
+  <div class="form-grid">
+    {% include "theme/includes/field.html" with field=form.quantity %}
+    {% include "theme/includes/field.html" with field=form.price %}
+    {% include "theme/includes/field.html" with field=form.market_price %}
+    {% include "theme/includes/field.html" with field=form.status %}
+  </div>
+  <p class="hint" style="margin:0">Changes to a published listing are queued as “To publish” until you publish them to CardTrader.</p>
+</form>
+<div class="panel" style="padding:0;border:0;background:none">
+  <div class="form-actions">
+    <div class="group">
+      <button type="submit" form="listing-form" class="btn btn-primary">{% if listing.pk %}Save listing{% else %}Create listing{% endif %}</button>
+      <a class="btn btn-ghost" href="{% url 'ledger:sale' %}">Cancel</a>
+    </div>
+    {% if listing.pk %}
+    <form method="post" action="{% url 'ledger:listing_delete' item.pk %}" onsubmit="return confirm('Remove this listing?')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger">Remove listing</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

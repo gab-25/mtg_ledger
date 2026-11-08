@@ -1,0 +1,28 @@
+{% extends "theme/base.html" %}
+{% block title %}Import CSV{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow"><a href="{% url 'ledger:collection' %}" style="color:inherit;text-decoration:none">Collection</a></div>
+    <h1>Import CSV</h1>
+  </div>
+</header>
+
+<form method="post" enctype="multipart/form-data" class="panel">
+  {% csrf_token %}
+  <p class="hint" style="margin:0">
+    Columns: {% for c in columns %}<code>{{ c }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}.
+    Only <code>name</code> and <code>set</code> are required. Rows matching an existing card, condition, language and foil
+    update its quantity and price; the others are added. The same format is produced by <a href="{% url 'ledger:export_csv' %}">Export CSV</a>.
+  </p>
+  <div class="form-grid">
+    {% include "theme/includes/field.html" with field=form.file wide=True %}
+  </div>
+  <div class="form-actions">
+    <div class="group">
+      <button type="submit" class="btn btn-primary">Import</button>
+      <a class="btn btn-ghost" href="{% url 'ledger:collection' %}">Cancel</a>
+    </div>
+  </div>
+</form>
+{% endblock %}

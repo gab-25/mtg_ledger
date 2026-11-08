@@ -1,0 +1,107 @@
+{% extends "theme/base.html" %}
+{% load humanize %}
+{% block title %}Sync{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow">Connected services</div>
+    <h1>Sync</h1>
+  </div>
+  <form method="post" action="{% url 'ledger:sync_all' %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary">{% include "theme/includes/sync_icon.svg" %}Sync all</button>
+  </form>
+</header>
+
+<section class="connections" aria-label="Connections">
+  {% for s in connections %}
+  <article class="connection">
+    <div class="connection-head">
+      <div><h2>{{ s.name }}</h2><div class="hint" style="margin-top:4px">{{ s.description }}</div></div>
+      {% with pending=pending_changes|add:s.open_conflicts %}
+      {% if pending %}
+      <span class="badge badge-pending"><span class="pill-dot"></span>{{ pending }} pending</span>
+      {% else %}
+      <span class="badge badge-ok"><span class="pill-dot"></span>In sync</span>
+      {% endif %}
+      {% endwith %}
+    </div>
+    <dl class="facts">
+      <div><dt>Last sync</dt><dd class="mono">{% if s.last_sync %}{{ s.last_sync|naturalday|capfirst }}, {{ s.last_sync|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
+      <div><dt>Direction</dt><dd>{{ s.direction|default:"—" }}</dd></div>
+      <div><dt>Orders imported</dt><dd class="mono">{% if s.orders_synced_at %}{{ s.orders_synced_at|naturalday|capfirst }}, {{ s.orders_synced_at|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
+      <div><dt>API token</dt><dd>{% if s.token_ok %}Configured{% else %}<a href="{% url 'accounts:profile' %}#cardtrader">Not configured</a>{% endif %}</dd></div>
+    </dl>
+    <div class="actions" style="gap:10px">
+      <form method="post" action="{% url 'ledger:publish' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{% url 'ledger:sync' %}">
+        <button type="submit" class="btn btn-raised"{% if not pending_changes %} disabled{% endif %}>Publish changes</button>
+      </form>
+      <a class="btn btn-ghost" href="{% url 'accounts:profile' %}#cardtrader">Settings</a>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="section" aria-labelledby="diff-title">
+  <div class="section-head">
+    <h2 id="diff-title">Conflicts to resolve</h2>
+    <span class="hint">Choose which source wins for each card</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table-conflicts">
+      <thead>
+        <tr>
+          <th scope="col">Card</th>
+          <th scope="col">Service</th>
+          <th scope="col">In Ledger</th>
+          <th scope="col">On service</th>
+          <th scope="col" style="text-align:right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in conflicts %}
+        <tr>
+          <td><div style="font-weight:500">{{ d.item.card.name }}</div><div class="sub">{{ d.item.card.set_code }} · {{ d.item.condition }} · {{ d.item.language }}</div></td>
+          <td class="dim">{{ d.service.name }}</td>
+          <td class="mono">{{ d.local_value }}</td>
+          <td class="mono remote">{{ d.remote_value }}</td>
+          <td>
+            <div class="row-actions">
+              <form method="post" action="{% url 'ledger:resolve' d.pk %}">
+                {% csrf_token %}<input type="hidden" name="keep" value="ledger">
+                <button type="submit" class="btn btn-sm btn-raised">Keep Ledger</button>
+              </form>
+              <form method="post" action="{% url 'ledger:resolve' d.pk %}">
+                {% csrf_token %}<input type="hidden" name="keep" value="remote">
+                <button type="submit" class="btn btn-sm btn-ghost">Keep remote</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5" class="empty">No conflicts — Ledger and connected services agree.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="log-title">
+  <h2 id="log-title">Activity log</h2>
+  {% if log %}
+  <ol class="log">
+    {% for l in log %}
+    <li>
+      <time class="log-when" datetime="{{ l.created_at|date:'c' }}">{{ l.created_at|naturalday:"M j"|capfirst }} {{ l.created_at|time:"H:i" }}</time>
+      <span class="log-dot{% if l.level == 'warn' %} warn{% endif %}"><span class="sr-only">{{ l.get_level_display }}</span></span>
+      <span class="log-text">{{ l.message }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="hint">No activity yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
