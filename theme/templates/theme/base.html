@@ -31,7 +31,7 @@
       <span class="avatar" aria-hidden="true">{{ user.get_username|first|upper }}</span>
       <div class="user-meta">
         <div class="user-name">{{ user.get_full_name|default:user.get_username }}</div>
-        <a href="{% url 'password_change' %}">Profile and settings</a>
+        <a href="{% url 'accounts:profile' %}"{% if nav == 'profile' %} aria-current="page"{% endif %}>Profile and settings</a>
       </div>
       <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}

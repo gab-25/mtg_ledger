@@ -5,6 +5,7 @@ MTG Ledger — Magic: The Gathering collection and CardTrader sales manager (Dja
 
 - `config/` — Django project (settings, root URLs)
 - `theme/` — look and feel: `base.html` layout with sidebar, `static/theme/app.css` (design tokens + components), shared includes, login/account templates
+- `accounts/` — profile page: personal details, password change, connected services
 - `ledger/` — domain: cards, collection, sale listings, shipments, CardTrader client and sync, CSV import/export
 
 ## Getting started

@@ -6,10 +6,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("login/", auth_views.LoginView.as_view(), name="login"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
-    path(
-        "account/password/",
-        auth_views.PasswordChangeView.as_view(success_url="/"),
-        name="password_change",
-    ),
+    path("account/", include("accounts.urls")),
     path("", include("ledger.urls")),
 ]

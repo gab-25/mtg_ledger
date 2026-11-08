@@ -210,15 +210,16 @@ tbody tr:hover { background: #1F2129; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field.wide { grid-column: 1 / -1; }
 .field label { font-size: 13px; color: var(--text-2); font-weight: 500; }
-.field input[type=text], .field input[type=number], .field input[type=password], .field input[type=file], .field select {
+.field input:not([type=checkbox]):not([type=radio]), .field select, .field textarea {
   min-height: 44px; padding: 0 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2);
   border-radius: 8px; font: inherit; font-size: 14px; width: 100%;
 }
-.field input[type=file] { padding: 10px 12px; }
+.field input[type=file]:not([type=checkbox]):not([type=radio]) { padding: 10px 12px; }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
 .field.check { flex-direction: row; align-items: center; gap: 10px; min-height: 44px; align-self: end; }
 .field.check input { width: 18px; height: 18px; accent-color: var(--accent); }
 .field .help { font-size: 12px; color: var(--muted); }
+.field .help ul { margin: 2px 0 0; padding-left: 18px; }
 .errors { margin: 0; padding: 0; list-style: none; color: var(--danger); font-size: 13px; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
 .form-actions .group { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -280,3 +281,17 @@ code { font-family: var(--mono); font-size: 13px; color: var(--accent-hi); }
   .address { font-size: 14pt; }
   .badge { border: 1px solid #999; background: none; color: #000; }
 }
+
+/* Profile */
+.profile-card {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 20px; padding: 24px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+}
+.avatar-lg { width: 64px; height: 64px; font-size: 26px; }
+.profile-id { flex: 1 1 200px; min-width: 0; }
+.profile-name { font-family: var(--serif); font-size: 26px; font-weight: 600; }
+.profile-facts { flex: 1 1 280px; }
+.connection-row { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; }
+.connection-row > div:first-child { flex: 1 1 200px; }
+.field input[readonly]:not([type=checkbox]):not([type=radio]) { color: var(--muted); background: var(--surface-2); }
+.user-meta a[aria-current="page"] { color: var(--accent); }
