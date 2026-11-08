@@ -103,8 +103,9 @@ your own devices can reach.
 2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
 
 Then start the database (`docker compose up -d db`) and run `scripts/dev-phone.sh` (option: `PORT`, default 8000).
-It checks Tailscale and the database connection, runs the migrations, sets the Django host/CSRF/proxy variables,
-publishes the server with `tailscale serve` and removes that rule on Ctrl+C. If `tailscale serve` is refused, allow your user once with
+It checks Tailscale and the database connection, sets the Django host/CSRF/proxy variables, publishes the server
+with `tailscale serve` and removes that rule on Ctrl+C. It does not run migrations: apply them yourself
+(`uv run python manage.py migrate`) when the branch adds new ones. If `tailscale serve` is refused, allow your user once with
 `sudo tailscale set --operator=$USER`.
 
 The same steps by hand:

@@ -38,7 +38,6 @@ fi
 # The Docker PostgreSQL must be up: give a clear hint instead of a Django traceback.
 uv run python manage.py shell -c "from django.db import connection; connection.ensure_connection()" >/dev/null 2>&1 \
   || die "cannot reach PostgreSQL: start it with 'docker compose up -d db' (or check the POSTGRES_* variables)."
-uv run python manage.py migrate --noinput
 
 export DJANGO_ALLOWED_HOSTS="${dns},localhost,127.0.0.1"
 export DJANGO_CSRF_TRUSTED_ORIGINS="https://${dns}"
