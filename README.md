@@ -57,8 +57,9 @@ docker run -p 8000:8000 \
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
 reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
-`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
-Migrations run at container start (`docker-entrypoint.sh`) before any command.
+`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`), `RUN_MIGRATIONS`.
+Migrations run at container start (`docker-entrypoint.sh`) before any command, unless `RUN_MIGRATIONS=false`
+(set it on the worker and on one-off containers, so only the web app migrates).
 
 ## CardTrader
 
@@ -75,6 +76,29 @@ Connect CardTrader from **Profile and settings → Connected services** (the tok
 Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/api/full/reference).
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
+
+## Cardmarket prices
+
+The Ledger keeps a local copy of every Cardmarket MTG single with its price guide (low, trend, average and the
+1/7/30-day averages, regular and foil), from Cardmarket's public daily files. Scryfall's `default_cards` bulk data
+ties each Cardmarket product to its set + collector number, which is how your cards are linked to it (cards whose
+set code differs from Scryfall's, or without a collector number, stay unlinked; the sync logs how many).
+
+- **Prices** page: search any card by name and see its Cardmarket prices.
+- **Listing form**: the Cardmarket trend (foil trend for foil copies) is suggested next to the CardTrader market
+  price; "Use" copies it into the price field.
+
+The sync runs on a Celery worker (Redis broker). `sync_cardmarket` only queues it; schedule it every night after
+03:00 (Cardmarket regenerates the price guide around 02:45 CET) with the scheduler of your choice.
+
+```bash
+docker compose up -d redis
+uv run celery -A config worker --loglevel=info      # the worker
+uv run python manage.py sync_cardmarket             # queue a sync (outcome in Sync → Activity log)
+```
+
+With Docker Compose the `worker` and `redis` services start with the stack; queue a sync with
+`docker compose exec mtg_ledger python manage.py sync_cardmarket`.
 
 ## Scanning cards with the camera
 

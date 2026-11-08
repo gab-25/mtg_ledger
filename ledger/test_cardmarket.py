@@ -2,8 +2,11 @@ import copy
 import gzip
 import json
 from decimal import Decimal
+from io import StringIO
+from unittest import mock
 
 import httpx
+from django.core.management import call_command
 from django.test import TestCase
 
 from . import cardmarket
@@ -207,3 +210,28 @@ class SyncTest(TestCase):
             log.message,
             "Cardmarket: 3 products, 2 priced (guide 2026-11-07), 1 cards linked, 0 not linked",
         )
+
+
+class SyncCommandTest(TestCase):
+    def test_command_only_enqueues(self):
+        from . import tasks
+
+        with mock.patch.object(tasks.sync_cardmarket, "delay", return_value=mock.Mock(id="abc")) as delay, \
+                mock.patch.object(cardmarket, "run_sync") as run:
+            out = StringIO()
+            call_command("sync_cardmarket", stdout=out)
+        delay.assert_called_once_with()
+        run.assert_not_called()
+        self.assertIn("Cardmarket sync queued (task abc)", out.getvalue())
+
+    def test_task_runs_sync(self):
+        from . import tasks
+
+        with mock.patch.object(cardmarket, "run_sync") as run:
+            tasks.sync_cardmarket.apply()
+        run.assert_called_once_with()
+
+    def test_no_beat_schedule(self):
+        from config.celery import app
+
+        self.assertFalse(app.conf.beat_schedule)
