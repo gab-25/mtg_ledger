@@ -55,7 +55,9 @@ docker run -p 8000:8000 \
 ```
 
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
-`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`.
+`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
+reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
+`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
 Migrations run at container start (`docker-entrypoint.sh`) before any command.
 
 ## CardTrader
@@ -86,6 +88,7 @@ are created as *To publish*).
 - Connect OpenRouter from **Profile and settings → Connected services** (or export `OPENROUTER_API_KEY`);
   `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
+- On a computer, the Scan cards page shows a **QR code** that opens the same page on your phone.
 - The browser only gives camera access over **HTTPS**: in development expose `runserver` through an HTTPS tunnel
   (and add its host to `ALLOWED_HOSTS` / `CSRF_TRUSTED_ORIGINS`).
 

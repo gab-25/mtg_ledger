@@ -212,3 +212,17 @@ class ReviewFixesViewsTest(ScanViewsTest):
         resp = self.capture(session)
         self.assertEqual(resp["X-Scan-Redirect"], reverse("ledger:collection"))
         self.assertEqual(self.recognizer_calls, 0)
+
+
+class PhoneQrTest(LedgerTestCase):
+    def test_start_page_shows_qr_for_this_page(self):
+        resp = self.client.get(reverse("ledger:scan_start"), secure=True)
+        self.assertContains(resp, "Open on your phone")
+        self.assertContains(resp, "<svg")
+        self.assertContains(resp, "https://testserver/scan/")
+        self.assertNotContains(resp, "needs HTTPS")
+
+    def test_plain_http_warns_camera_needs_https(self):
+        resp = self.client.get(reverse("ledger:scan_start"))
+        self.assertContains(resp, "http://testserver/scan/")
+        self.assertContains(resp, "needs HTTPS")

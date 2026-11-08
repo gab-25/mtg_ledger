@@ -2,6 +2,7 @@
 
 from decimal import Decimal, InvalidOperation
 
+import segno
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
@@ -66,6 +67,11 @@ def _language(value, default=""):
     return value if value in Language.values else default
 
 
+def _qr_svg(url):
+    """Inline SVG QR code (dark modules on white, readable by phone cameras in both themes)."""
+    return segno.make(url, error="m").svg_inline(scale=6, border=2, dark="#121318", light="#FFFFFF")
+
+
 @login_required
 def scan_start(request):
     if request.method == "POST":
@@ -93,7 +99,11 @@ def scan_start(request):
         except CardTraderError as exc:
             messages.error(request, f"Could not load the expansions from CardTrader: {exc}")
     last = ScanSession.objects.order_by("-created_at", "-id").first()
+    phone_url = request.build_absolute_uri(reverse("ledger:scan_start"))
     return render(request, "ledger/scan_start.html", {
+        "phone_url": phone_url,
+        "phone_qr": _qr_svg(phone_url),
+        "phone_secure": request.is_secure(),
         "nav": "collection",
         "expansions": Expansion.objects.all(),
         "conditions": Condition.choices,

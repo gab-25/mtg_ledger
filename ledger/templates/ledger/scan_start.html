@@ -8,6 +8,7 @@
   </div>
 </header>
 
+<div class="scan-start">
 <form method="post" class="scan-panel">
   {% csrf_token %}
   <div class="field">
@@ -33,4 +34,15 @@
   <button type="submit" class="btn btn-primary btn-wide">Open camera</button>
   <p class="hint" style="text-align:center">Cards stay in a draft until you save them.</p>
 </form>
+
+<aside class="scan-qr" aria-labelledby="qr-title">
+  <h2 id="qr-title">Open on your phone</h2>
+  <div class="scan-qr-code" role="img" aria-label="QR code linking to {{ phone_url }}">{{ phone_qr|safe }}</div>
+  <p class="hint">Scan it with the phone camera, sign in if asked, and start scanning there.</p>
+  <p class="mono sub scan-qr-url">{{ phone_url }}</p>
+  {% if not phone_secure %}
+  <p class="scan-qr-warn">This address is not HTTPS: the phone browser will open the page but won't allow the camera (it needs HTTPS).</p>
+  {% endif %}
+</aside>
+</div>
 {% endblock %}
