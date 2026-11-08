@@ -12,6 +12,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: mtg_ledger
+          POSTGRES_USER: mtg_ledger
+          POSTGRES_PASSWORD: mtg_ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mtg_ledger -d mtg_ledger"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
 

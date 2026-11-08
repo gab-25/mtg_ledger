@@ -10,6 +10,16 @@ MTG Ledger — Magic: The Gathering collection and CardTrader sales manager (Dja
 
 ## Getting started
 
+The app uses PostgreSQL. Start a local instance with Docker:
+
+```bash
+docker compose up -d db
+```
+
+Connection settings come from environment variables (defaults match `compose.yaml`):
+`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (all default `mtg_ledger`), `POSTGRES_HOST` (`localhost`),
+`POSTGRES_PORT` (`5432`), `POSTGRES_CONN_MAX_AGE` (`60` seconds).
+
 ```bash
 uv sync
 uv run python manage.py migrate
@@ -24,17 +34,29 @@ Tests: `uv run python manage.py test`
 
 The image is published to `ghcr.io/gab-25/mtg_ledger` only when a GitHub release is published (`.github/workflows/release.yml`, after the tests pass). Tests run on every PR and push to `main` (`.github/workflows/tests.yml`).
 
+Run the whole stack (PostgreSQL + app built from the local `Dockerfile`) with Docker Compose:
+
 ```bash
-docker run -p 8000:8000 -v mtg-data:/data \
+docker compose up -d --build
+docker compose exec mtg_ledger python manage.py createsuperuser
+```
+
+The app is served on http://localhost:8000 (`APP_PORT` to change it). Compose reads overrides from the environment
+or a `.env` file — set at least `DJANGO_SECRET_KEY` and `POSTGRES_PASSWORD` outside local use.
+
+To run the published image against an existing PostgreSQL:
+
+```bash
+docker run -p 8000:8000 \
+  -e POSTGRES_HOST=db.example.com -e POSTGRES_PASSWORD=... \
   -e DJANGO_SECRET_KEY=... -e DJANGO_ALLOWED_HOSTS=ledger.example.com \
   -e DJANGO_CSRF_TRUSTED_ORIGINS=https://ledger.example.com \
   ghcr.io/gab-25/mtg_ledger:latest
 ```
 
-Environment variables: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image), `DJANGO_ALLOWED_HOSTS`,
-`DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_DB_PATH` (default `/data/db.sqlite3`), `GUNICORN_WORKERS`,
-`CARDTRADER_API_TOKEN`. Migrations run at container start (`docker-entrypoint.sh`) before any command, e.g.
-`docker run -it -v mtg-data:/data ghcr.io/gab-25/mtg_ledger python manage.py createsuperuser`.
+Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
+`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`.
+Migrations run at container start (`docker-entrypoint.sh`) before any command.
 
 ## CardTrader
 
