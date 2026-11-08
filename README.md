@@ -104,8 +104,8 @@ your own devices can reach.
 
 Then start the database (`docker compose up -d db`) and run `scripts/dev-phone.sh` (option: `PORT`, default 8000).
 It checks Tailscale and the database connection, sets the Django host/CSRF/proxy variables, publishes the server
-with `tailscale serve` and removes that rule on Ctrl+C. It does not run migrations: apply them yourself
-(`uv run python manage.py migrate`) when the branch adds new ones. If `tailscale serve` is refused, allow your user once with
+with `tailscale serve` and removes that rule on Ctrl+C. It never runs migrations: if some are missing it stops
+and asks you to run `uv run python manage.py migrate`. If `tailscale serve` is refused, allow your user once with
 `sudo tailscale set --operator=$USER`.
 
 The same steps by hand:

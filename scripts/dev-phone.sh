@@ -39,6 +39,10 @@ fi
 uv run python manage.py shell -c "from django.db import connection; connection.ensure_connection()" >/dev/null 2>&1 \
   || die "cannot reach PostgreSQL: start it with 'docker compose up -d db' (or check the POSTGRES_* variables)."
 
+# Never change the schema from here (the database may be shared): only check it is up to date.
+uv run python manage.py migrate --check >/dev/null 2>&1 \
+  || die "unapplied migrations: run 'uv run python manage.py migrate' first."
+
 export DJANGO_ALLOWED_HOSTS="${dns},localhost,127.0.0.1"
 export DJANGO_CSRF_TRUSTED_ORIGINS="https://${dns}"
 export DJANGO_BEHIND_HTTPS_PROXY=true
