@@ -168,3 +168,11 @@ OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'google/gemini-2.5-flash')
 # Celery (the Cardmarket sync runs on a worker; scheduling is external, no beat)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_TASK_IGNORE_RESULT = True
+
+# Server console logging for the app (e.g. OpenRouter not configured)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {'console': {'class': 'logging.StreamHandler'}},
+    'loggers': {'ledger': {'handlers': ['console'], 'level': 'INFO'}},
+}

@@ -275,13 +275,15 @@ class ScanUuidTest(ScanViewsBase):
 
 
 class ScanErrorMessagesTest(ScanViewsBase):
-    def test_capture_without_openrouter_key_says_so(self):
+    def test_capture_without_openrouter_key_logs_it_on_the_server(self):
         session = self.start()
         self.set_keys(openrouter="", cardtrader="ct-token")
-        resp = self.capture(session)
-        self.assertContains(resp, "OpenRouter is not configured", status_code=503)
-        self.assertContains(resp, "OPENROUTER_API_KEY", status_code=503)
-        self.assertNotContains(resp, "#openrouter", status_code=503)
+        with self.assertLogs("ledger.scan_views", "WARNING") as logs:
+            resp = self.capture(session)
+        self.assertIn("OPENROUTER_API_KEY", logs.output[0])
+        self.assertContains(resp, "Card recognition is not available", status_code=503)
+        self.assertNotContains(resp, "OpenRouter", status_code=503)
+        self.assertNotContains(resp, "OPENROUTER_API_KEY", status_code=503)
         self.assertEqual((self.recognizer_calls, ScanLine.objects.count()), (0, 0))
 
     def test_capture_without_cardtrader_token_says_so(self):
@@ -303,12 +305,13 @@ class ScanErrorMessagesTest(ScanViewsBase):
         self.set_keys(openrouter="", cardtrader="")
         Expansion.objects.all().delete()
         no_token = CardTraderError("CardTrader API token is not configured.")
-        with mock.patch.object(services, "make_client", side_effect=no_token):
+        with mock.patch.object(services, "make_client", side_effect=no_token), \
+                self.assertLogs("ledger.scan_views", "WARNING") as logs:
             resp = self.client.get(reverse("ledger:scan_start"))
+        self.assertIn("OPENROUTER_API_KEY", logs.output[0])
         self.assertNotContains(resp, "Could not load the expansions")
-        self.assertContains(resp, "OpenRouter is not configured")
+        self.assertNotContains(resp, "OpenRouter")
         self.assertContains(resp, "CardTrader is not connected")
-        self.assertNotContains(resp, "#openrouter")
         self.assertContains(resp, reverse("accounts:profile") + "#cardtrader")
 
     def test_start_page_without_warnings_when_connected(self):
