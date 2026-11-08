@@ -20,6 +20,22 @@ uv run python manage.py runserver
 
 Tests: `uv run python manage.py test`
 
+## Docker
+
+The image is published to `ghcr.io/gab-25/mtg_ledger` only when a GitHub release is published (`.github/workflows/release.yml`, after the tests pass). Tests run on every PR and push to `main` (`.github/workflows/tests.yml`).
+
+```bash
+docker run -p 8000:8000 -v mtg-data:/data \
+  -e DJANGO_SECRET_KEY=... -e DJANGO_ALLOWED_HOSTS=ledger.example.com \
+  -e DJANGO_CSRF_TRUSTED_ORIGINS=https://ledger.example.com \
+  ghcr.io/gab-25/mtg_ledger:latest
+```
+
+Environment variables: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image), `DJANGO_ALLOWED_HOSTS`,
+`DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_DB_PATH` (default `/data/db.sqlite3`), `GUNICORN_WORKERS`,
+`CARDTRADER_API_TOKEN`. Migrations run at container start (`docker-entrypoint.sh`) before any command, e.g.
+`docker run -it -v mtg-data:/data ghcr.io/gab-25/mtg_ledger python manage.py createsuperuser`.
+
 ## CardTrader
 
 Connect CardTrader from **Profile and settings → Connected services** (the token is checked with CardTrader before it is saved, and never shown again), or export `CARDTRADER_API_TOKEN`.
