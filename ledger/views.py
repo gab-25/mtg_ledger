@@ -1,3 +1,5 @@
+from urllib.parse import urlencode
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -10,6 +12,7 @@ from django.views.decorators.http import require_POST
 
 from . import cardmarket, services
 from .cardtrader import CardTraderError
+from .catalog import normalize_number
 from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm
 from .models import Card, CardmarketProduct, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
 from .presentation import COLOR_FILTERS, ORDER_TABS, item_badge, listing_badge, order_badge, pip
@@ -183,13 +186,29 @@ def sale(request):
 
 
 @login_required
-def prices(request):
-    """Search the local Cardmarket catalog by name."""
+def cards(request):
+    """Search the local card database (every Cardmarket single) by name, set, collector number and ownership."""
     q = request.GET.get("q", "").strip()
+    set_code = request.GET.get("set", "").strip().lower()
+    number = normalize_number(request.GET.get("number", ""))
+    owned = request.GET.get("owned") == "1"
     page = None
-    if q:
-        page = Paginator(CardmarketProduct.objects.filter(name__icontains=q), PAGE_SIZE).get_page(request.GET.get("page"))
-    return render(request, "ledger/prices.html", {"nav": "prices", "q": q, "page": page})
+    if q or set_code or number or owned:
+        products = CardmarketProduct.objects.annotate(owned_qty=Sum("cards__items__quantity"))
+        if q:
+            products = products.filter(Q(name__icontains=q) | Q(set_code__iexact=q))
+        if set_code:
+            products = products.filter(set_code=set_code)
+        if number:
+            products = products.filter(collector_number=number)
+        if owned:
+            products = products.filter(owned_qty__gt=0)
+        page = Paginator(products, PAGE_SIZE).get_page(request.GET.get("page"))
+    params = {k: v for k, v in (("q", q), ("set", set_code), ("number", number), ("owned", "1" if owned else "")) if v}
+    return render(request, "ledger/cards.html", {
+        "nav": "cards", "q": q, "set_code": set_code, "number": number, "owned": owned, "page": page,
+        "query": urlencode(params),
+    })
 
 
 @login_required

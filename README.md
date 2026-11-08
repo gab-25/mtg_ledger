@@ -84,7 +84,8 @@ The Ledger keeps a local copy of every Cardmarket MTG single with its price guid
 ties each Cardmarket product to its set + collector number, which is how your cards are linked to it (cards whose
 set code differs from Scryfall's, or without a collector number, stay unlinked; the sync logs how many).
 
-- **Prices** page: search any card by name and see its Cardmarket prices.
+- **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
+  how many copies you own and the Cardmarket prices.
 - **Listing form**: the Cardmarket trend (foil trend for foil copies) is suggested next to the CardTrader market
   price; "Use" copies it into the price field.
 

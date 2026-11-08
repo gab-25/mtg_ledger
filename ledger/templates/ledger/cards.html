@@ -1,23 +1,37 @@
 {% extends "theme/base.html" %}
 {% load humanize %}
-{% block title %}Prices{% endblock %}
+{% block title %}Cards{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
-    <div class="eyebrow">Cardmarket</div>
-    <h1>Prices</h1>
+    <div class="eyebrow">Card database</div>
+    <h1>Cards</h1>
   </div>
   <div class="actions">
     <form method="get" role="search" class="search">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A7A39A" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
-      <label for="q" class="sr-only">Search Cardmarket cards</label>
-      <input id="q" type="search" name="q" value="{{ q }}" placeholder="Search a card by name…" autofocus>
+      <label for="q" class="sr-only">Search cards</label>
+      <input id="q" type="search" name="q" value="{{ q }}" placeholder="Search by name or set code…" autofocus>
+      {% if set_code %}<input type="hidden" name="set" value="{{ set_code }}">{% endif %}
+      {% if number %}<input type="hidden" name="number" value="{{ number }}">{% endif %}
+      {% if owned %}<input type="hidden" name="owned" value="1">{% endif %}
     </form>
   </div>
 </header>
 
-{% if not q %}
-<p class="hint">Search any Magic single by name to see its Cardmarket price guide (updated nightly).</p>
+<form method="get" class="filters" aria-label="Filters">
+  {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+  <label for="f-set" class="sr-only">Set code</label>
+  <input id="f-set" name="set" value="{{ set_code }}" placeholder="Set (e.g. m21)" class="pill{% if set_code %} is-set{% endif %}" size="10">
+  <label for="f-number" class="sr-only">Collector number</label>
+  <input id="f-number" name="number" value="{{ number }}" placeholder="Number" class="pill{% if number %} is-set{% endif %}" size="6">
+  <label class="pill"{% if owned %} aria-current="true"{% endif %}><input type="checkbox" name="owned" value="1"{% if owned %} checked{% endif %} onchange="this.form.submit()"> In my collection</label>
+  <button type="submit" class="pill">Apply</button>
+  {% if page is not None %}<a class="clear-link" href="{% url 'ledger:cards' %}">Clear</a>{% endif %}
+</form>
+
+{% if page is None %}
+<p class="hint">Search the card database — every Magic single on Cardmarket, with its price guide (updated nightly) — by name, set code or collector number, or list the cards you own.</p>
 {% else %}
 <div class="table-wrap">
   <table>
@@ -25,6 +39,7 @@
       <tr>
         <th scope="col">Card</th>
         <th scope="col">Set</th>
+        <th scope="col" style="text-align:right">Owned</th>
         <th scope="col" style="text-align:right">Trend</th>
         <th scope="col" style="text-align:right">Low</th>
         <th scope="col" style="text-align:right">Avg</th>
@@ -43,6 +58,7 @@
           </div>
         </td>
         <td class="mono dim">{% if p.set_code %}{{ p.set_code|upper }}{% if p.collector_number %} #{{ p.collector_number }}{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">{{ p.owned_qty|default_if_none:"—" }}</td>
         <td class="num">{% if p.trend is not None %}€{{ p.trend|floatformat:"2g" }}{% else %}—{% endif %}</td>
         <td class="num">{% if p.low is not None %}€{{ p.low|floatformat:"2g" }}{% else %}—{% endif %}</td>
         <td class="num">{% if p.avg is not None %}€{{ p.avg|floatformat:"2g" }}{% else %}—{% endif %}</td>
@@ -51,7 +67,7 @@
         <td class="num">{% if p.avg_foil is not None %}€{{ p.avg_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="8" class="empty">No Cardmarket cards match “{{ q }}”.</td></tr>
+      <tr><td colspan="9" class="empty">No cards match these criteria.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -60,9 +76,9 @@
   <span>Showing {{ page.object_list|length }} of {{ page.paginator.count|intcomma }} printings{% with first=page.object_list.0 %}{% if first.prices_date %} · price guide of {{ first.prices_date|date:"j M Y" }}{% endif %}{% endwith %}</span>
   {% if page.has_other_pages %}
   <nav class="pager" aria-label="Pagination">
-    {% if page.has_previous %}<a class="btn btn-sm" href="?q={{ q|urlencode }}&amp;page={{ page.previous_page_number }}">Previous</a>{% endif %}
+    {% if page.has_previous %}<a class="btn btn-sm" href="?{{ query }}&amp;page={{ page.previous_page_number }}">Previous</a>{% endif %}
     <span class="btn btn-sm btn-ghost" aria-current="page">{{ page.number }} / {{ page.paginator.num_pages }}</span>
-    {% if page.has_next %}<a class="btn btn-sm" href="?q={{ q|urlencode }}&amp;page={{ page.next_page_number }}">Next</a>{% endif %}
+    {% if page.has_next %}<a class="btn btn-sm" href="?{{ query }}&amp;page={{ page.next_page_number }}">Next</a>{% endif %}
   </nav>
   {% endif %}
 </div>
