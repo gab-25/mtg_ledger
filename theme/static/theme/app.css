@@ -328,6 +328,8 @@ code { font-family: var(--mono); font-size: 13px; color: var(--accent-hi); }
 .scan-option img, .scan-line img, .scan-thumb { width: 40px; height: 56px; flex: none; border-radius: 4px; object-fit: cover; background: var(--surface-2); border: 1px solid var(--line-2); }
 .scan-option-text, .scan-line-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .scan-option-name { font-weight: 600; font-size: 15px; }
+.scan-warnings { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.scan-warnings .scan-warn { margin: 0; }
 .scan-warn { display: block; padding: 14px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); text-decoration: none; font-size: 14px; }
 .scan-warn:hover { color: var(--warn); text-decoration: underline; }
 .scan-threshold { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: 14px; color: var(--text-2); }
