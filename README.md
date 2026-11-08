@@ -102,9 +102,9 @@ your own devices can reach.
    the phone while testing.
 2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
 
-Then run `scripts/dev-phone.sh` (options: `PORT`, default 8000, and `POSTGRES_DB`, default `mtg_ledger_scan`). It
-checks Tailscale, creates and migrates the database, sets the Django host/CSRF/proxy variables, publishes the server
-with `tailscale serve` and removes that rule on Ctrl+C. If `tailscale serve` is refused, allow your user once with
+Then start the database (`docker compose up -d db`) and run `scripts/dev-phone.sh` (option: `PORT`, default 8000).
+It checks Tailscale and the database connection, runs the migrations, sets the Django host/CSRF/proxy variables,
+publishes the server with `tailscale serve` and removes that rule on Ctrl+C. If `tailscale serve` is refused, allow your user once with
 `sudo tailscale set --operator=$USER`.
 
 The same steps by hand:
@@ -124,8 +124,7 @@ The same steps by hand:
 5. Open the `ts.net` address on the computer, connect OpenRouter and CardTrader in **Profile and settings**, start a
    session in **Scan cards** and scan the QR code with the phone.
 
-If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`. Use a separate
-database (`POSTGRES_DB`) if another checkout shares the same PostgreSQL.
+If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.
 
 ## CSV
 

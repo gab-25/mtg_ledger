@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Run the development server reachable from your phone over HTTPS through Tailscale.
 #
-#   scripts/dev-phone.sh            # port 8000, database mtg_ledger_scan
-#   PORT=8001 POSTGRES_DB=other scripts/dev-phone.sh
+#   scripts/dev-phone.sh            # port 8000
+#   PORT=8001 scripts/dev-phone.sh
 #
 # Needs: Tailscale running on this computer and on the phone (same account), MagicDNS and
-# HTTPS Certificates enabled in the Tailscale admin console, PostgreSQL reachable with the
-# POSTGRES_* settings. Ctrl+C stops Django and removes the Tailscale serve rule.
+# HTTPS Certificates enabled in the Tailscale admin console, and the PostgreSQL started with
+# Docker Compose (`docker compose up -d db`), reached with the usual POSTGRES_* settings.
+# Ctrl+C stops Django and removes the Tailscale serve rule.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 PORT="${PORT:-8000}"
-export POSTGRES_DB="${POSTGRES_DB:-mtg_ledger_scan}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -35,22 +35,9 @@ if ! python3 -c 'import socket, sys; s = socket.socket(); s.bind(("127.0.0.1", i
   die "port $PORT is already in use: stop what is listening there, or run with PORT=<another port>."
 fi
 
-# A separate database, so another checkout sharing the same PostgreSQL is not migrated by this branch.
-uv run python - <<'PY'
-import os
-import psycopg
-from django.conf import settings
-import django
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-django.setup()
-db = settings.DATABASES["default"]
-params = dict(host=db["HOST"], port=db["PORT"], user=db["USER"], password=db["PASSWORD"], autocommit=True)
-with psycopg.connect(dbname="postgres", **params) as conn:
-    if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", [db["NAME"]]).fetchone():
-        conn.execute(f'CREATE DATABASE "{db["NAME"]}"')
-        print(f"created database {db['NAME']}")
-PY
+# The Docker PostgreSQL must be up: give a clear hint instead of a Django traceback.
+uv run python manage.py shell -c "from django.db import connection; connection.ensure_connection()" >/dev/null 2>&1 \
+  || die "cannot reach PostgreSQL: start it with 'docker compose up -d db' (or check the POSTGRES_* variables)."
 uv run python manage.py migrate --noinput
 
 export DJANGO_ALLOWED_HOSTS="${dns},localhost,127.0.0.1"
@@ -66,7 +53,7 @@ trap cleanup EXIT
 cat <<EOF
 
   MTG Ledger is on your tailnet:  https://${dns}
-  Database: ${POSTGRES_DB}   (create a user with: POSTGRES_DB=${POSTGRES_DB} uv run python manage.py createsuperuser)
+  No user yet? Create one with: uv run python manage.py createsuperuser
 
   Open that address on the computer, connect OpenRouter and CardTrader in Profile and settings,
   start a session in Scan cards and scan the QR code with the phone (Tailscale on).
