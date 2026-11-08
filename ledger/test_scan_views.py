@@ -309,3 +309,13 @@ class ScanErrorMessagesTest(ScanViewsBase):
     def test_start_page_without_warnings_when_connected(self):
         resp = self.client.get(reverse("ledger:scan_start"))
         self.assertNotContains(resp, "is not connected")
+
+
+class NoCardTest(ScanViewsBase):
+    def test_photo_without_a_card_adds_nothing(self):
+        session = self.start()
+        self.recognizer.result = Recognition()  # the model saw no card
+        resp = self.capture(session, "empty")
+        self.assertContains(resp, "No card in the picture")
+        self.assertEqual(ScanLine.objects.count(), 0)
+        self.assertEqual(self.capture(session, "empty2")["X-Scan-Count"], "0")

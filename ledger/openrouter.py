@@ -24,7 +24,8 @@ PROMPT = (
     "- foil: true if the card is foil (holographic sheen, star next to the set code).\n"
     "- type_line: the type line in English (e.g. \"Creature — Elf Druid\").\n"
     f"- color: one of {', '.join(Color.values)} (M for multicolor, C for colorless).\n"
-    "Never guess a collector number you cannot read."
+    "Never guess a collector number you cannot read. "
+    "If the photo shows no Magic card (or it is unreadable), answer with an empty name and empty fields."
 )
 
 SCHEMA = {

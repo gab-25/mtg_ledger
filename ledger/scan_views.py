@@ -186,6 +186,9 @@ def scan_capture(request, uid):
         try:
             with services.make_openrouter() as model:
                 rec = model.recognize_card(image)
+            if not rec.name and not rec.collector_number:  # an empty table, a hand, a blurred frame
+                scan.release_capture(capture)
+                return _toast(request, session, state="No card in the picture — frame a card", error=True)
             with services.make_client() as client:
                 found = recognition.match(client, rec, session.expansion)
                 done, _ = scan.add_capture(session, client, rec, found, frame=image, capture=capture)

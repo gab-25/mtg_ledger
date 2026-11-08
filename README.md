@@ -79,7 +79,8 @@ PL→Heavily Played, PO→Poor.
 ## Scanning cards with the camera
 
 **Collection → Scan cards** opens a phone-friendly flow: pick an expansion (or *All expansions*) and a default
-condition, then frame one card at a time and tap the shutter. The photo is recognised by a vision model on
+condition, then frame one card at a time: it is sent when the picture stays still (**Auto**, can be paused) or
+when you tap the shutter. The photo is recognised by a vision model on
 OpenRouter, matched against the local CardTrader catalog and added to a draft.
 Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged), lets you set a
 "list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
