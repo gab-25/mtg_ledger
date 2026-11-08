@@ -5,12 +5,14 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from . import services
-from .forms import CardItemForm, CsvImportForm, ListingForm, SyncServiceForm
-from .models import Card, CollectionItem, Color, Condition, Listing, SyncConflict, SyncLog, SyncService
-from .presentation import COLOR_FILTERS, item_badge, listing_badge, pip
+from .cardtrader import CardTraderError
+from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm, SyncServiceForm
+from .models import Card, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
+from .presentation import COLOR_FILTERS, ORDER_TABS, item_badge, listing_badge, order_badge, pip
 
 PAGE_SIZE = 50
 VALUE = ExpressionWrapper(F("price") * F("quantity"), output_field=DecimalField())
@@ -27,6 +29,13 @@ def _query(request, **changes):
             params[key] = value
     encoded = params.urlencode()
     return f"?{encoded}" if encoded else "?"
+
+
+def _safe_next(request, default):
+    nxt = request.POST.get("next", "")
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        return nxt
+    return default
 
 
 # --- Collection ----------------------------------------------------------
@@ -200,8 +209,12 @@ def listing_edit(request, item_pk):
 @login_required
 @require_POST
 def listing_delete(request, item_pk):
-    listing = get_object_or_404(Listing, item__pk=item_pk)
-    listing.delete()
+    listing = get_object_or_404(Listing.objects.select_related("item__card"), item__pk=item_pk)
+    try:
+        services.remove_listing(listing)
+    except CardTraderError as exc:
+        messages.error(request, f"Listing not removed: {exc}")
+        return redirect("ledger:listing_edit", item_pk=item_pk)
     messages.success(request, "Listing removed.")
     return redirect("ledger:sale")
 
@@ -209,15 +222,26 @@ def listing_delete(request, item_pk):
 @login_required
 @require_POST
 def publish(request):
-    count = services.publish_pending()
-    messages.success(request, f"Published {count} listing{'s' if count != 1 else ''} to CardTrader.")
-    return redirect(request.POST.get("next") or "ledger:sale")
+    try:
+        result = services.publish_pending()
+    except CardTraderError as exc:
+        messages.error(request, f"Publish failed: {exc}")
+    else:
+        n = result.published
+        messages.success(request, f"Published {n} listing{'s' if n != 1 else ''} to CardTrader.")
+        for listing, reason in result.failed:
+            messages.warning(request, f"{listing.item.card.name}: {reason}")
+    return redirect(_safe_next(request, "ledger:sale"))
 
 
 @login_required
 @require_POST
 def match_prices(request):
-    count = services.match_market_prices()
+    try:
+        count = services.match_market_prices()
+    except CardTraderError as exc:
+        messages.error(request, f"Could not read market prices: {exc}")
+        return redirect("ledger:sale")
     messages.success(request, f"{count} prices matched to market." if count else "All prices already match the market.")
     return redirect("ledger:sale")
 
@@ -230,6 +254,9 @@ def sync(request):
     connections = SyncService.objects.annotate(
         open_conflicts=Count("conflicts", filter=Q(conflicts__resolution=SyncConflict.Resolution.OPEN))
     )
+    connections = list(connections)
+    for s in connections:
+        s.token_ok = bool(services.api_token(s))
     conflicts = SyncConflict.objects.filter(resolution=SyncConflict.Resolution.OPEN).select_related("item__card", "service")
     return render(request, "ledger/sync.html", {
         "nav": "sync",
@@ -242,9 +269,13 @@ def sync(request):
 @login_required
 @require_POST
 def sync_all(request):
-    services.sync_all()
-    messages.success(request, "Sync complete.")
-    return redirect("ledger:sync")
+    try:
+        conflicts = services.sync_all()
+    except CardTraderError as exc:
+        messages.error(request, f"Sync failed: {exc}")
+    else:
+        messages.success(request, f"Sync complete: {conflicts} conflict{'s' if conflicts != 1 else ''} to resolve.")
+    return redirect(_safe_next(request, "ledger:sync"))
 
 
 @login_required
@@ -269,3 +300,82 @@ def service_settings(request, pk):
         messages.success(request, f"{service.name} settings saved.")
         return redirect("ledger:sync")
     return render(request, "ledger/service_form.html", {"nav": "sync", "form": form, "service": service})
+
+
+# --- Shipments -----------------------------------------------------------
+
+@login_required
+def shipments(request):
+    tab = request.GET.get("tab", "to_ship")
+    if tab not in ORDER_TABS:
+        tab = "to_ship"
+    orders = Order.objects.prefetch_related("items")
+    month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    to_ship = orders.filter(state=Order.State.PAID)
+    stats = {
+        "to_ship": to_ship.count(),
+        "items_to_ship": to_ship.aggregate(n=Sum("size"))["n"] or 0,
+        "shipped_month": orders.filter(sent_at__gte=month_start).count(),
+        "revenue_month": orders.filter(paid_at__gte=month_start)
+        .exclude(state__in=[Order.State.CANCELED, Order.State.CLOSED])
+        .aggregate(v=Sum("total"))["v"] or 0,
+    }
+    tabs = [
+        {"key": key, "label": label, "count": orders.filter(state__in=states).count(), "active": key == tab}
+        for key, (label, states) in ORDER_TABS.items()
+    ]
+    shown = orders.filter(state__in=ORDER_TABS[tab][1])
+    if tab == "to_ship":
+        shown = shown.order_by("packing_number", "paid_at")
+    rows = [{"o": o, "badge": order_badge(o.state)} for o in shown[:200]]
+    return render(request, "ledger/shipments.html", {
+        "nav": "shipments", "stats": stats, "tabs": tabs, "rows": rows, "tab": tab,
+        "service": services.get_cardtrader(),
+    })
+
+
+@login_required
+def order_detail(request, pk):
+    order = get_object_or_404(Order.objects.prefetch_related("items__listing__item__card"), pk=pk)
+    form = ShipForm(initial={"tracking_code": order.tracking_code})
+    return render(request, "ledger/order_detail.html", {
+        "nav": "shipments", "order": order, "form": form, "badge": order_badge(order.state),
+    })
+
+
+@login_required
+@require_POST
+def order_ship(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    form = ShipForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Invalid tracking code.")
+        return redirect("ledger:order_detail", pk=pk)
+    try:
+        if "save_tracking" in request.POST:
+            services.save_tracking_code(order, form.cleaned_data["tracking_code"])
+            messages.success(request, "Tracking code saved on CardTrader.")
+        else:
+            if not order.can_ship:
+                messages.error(request, f"Order #{order.code} is {order.state_label.lower()}: it cannot be shipped.")
+                return redirect("ledger:order_detail", pk=pk)
+            services.ship_order(order, form.cleaned_data["tracking_code"])
+            messages.success(request, f"Order #{order.code} marked as shipped.")
+            return redirect("ledger:shipments")
+    except CardTraderError as exc:
+        messages.error(request, str(exc))
+    return redirect("ledger:order_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def orders_sync(request):
+    service = services.get_cardtrader()
+    try:
+        with services.make_client(service) as client:
+            created, updated = services.import_orders(client, service)
+    except CardTraderError as exc:
+        messages.error(request, f"Orders not imported: {exc}")
+    else:
+        messages.success(request, f"Orders imported: {created} new, {updated} updated.")
+    return redirect("ledger:shipments")

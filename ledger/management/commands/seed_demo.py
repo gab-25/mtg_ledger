@@ -5,7 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from ledger.models import Card, CollectionItem, Listing, SyncConflict, SyncLog
+from ledger.models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog
 from ledger.services import get_cardtrader
 
 # name, type, set, cond, lang, qty, price, color, listing (status, price, market) or None
@@ -23,10 +23,11 @@ CARDS = [
     ("Endurance", "Creature — Reptile Elemental Incarnation", "MH2", "LP", "EN", 1, "11.00", "G", ("sold", "11.00", "11.30")),
 ]
 
+# name, field, Ledger value, CardTrader value, numeric CardTrader value
 CONFLICTS = [
-    ("Sheoldred, the Apocalypse", "quantity", "2 for sale", "1 for sale, 1 sold"),
-    ("Counterspell", "price", "€0.80", "€0.70"),
-    ("Fable of the Mirror-Breaker", "status", "For sale", "Not published"),
+    ("Sheoldred, the Apocalypse", "quantity", "2 for sale", "1 for sale", Decimal("1")),
+    ("Counterspell", "price", "€0.80", "€0.70", Decimal("0.70")),
+    ("Fable of the Mirror-Breaker", "status", "Published", "Not on CardTrader", None),
 ]
 
 
@@ -40,6 +41,7 @@ class Command(BaseCommand):
     def handle(self, *args, reset=False, **options):
         if reset:
             Card.objects.all().delete()
+            Order.objects.all().delete()
             SyncLog.objects.all().delete()
         now = timezone.now()
         service = get_cardtrader()
@@ -64,11 +66,38 @@ class Command(BaseCommand):
                     "sold_at": now if status == "sold" else None,
                 })
 
-        for name, field, local, remote in CONFLICTS:
+        for name, field, local, remote, amount in CONFLICTS:
             SyncConflict.objects.get_or_create(
                 service=service, item=items[name], field=field,
-                defaults={"local_value": local, "remote_value": remote},
+                defaults={"local_value": local, "remote_value": remote, "remote_amount": amount},
             )
+
+        # Demo shipments (already counted in the stock above).
+        orders = [
+            (9000001, "20261107a1b2c3", "paid", False, "mtgfan88", ("Luca Bianchi", "Via Roma 12", "20121", "Milano", "MI", "Italy", "IT"), "Raccomandata", True, 1, [("Endurance", "Modern Horizons 2", 1, "11.00", "Played")]),
+            (9000002, "20261107d4e5f6", "paid", False, "proxyless", ("Marie Dubois", "12 rue des Lilas", "69003", "Lyon", "", "France", "FR"), "Priority Letter", False, 2, [("Counterspell", "Dominaria Remastered", 2, "0.80", "Near Mint")]),
+            (9000003, "20261106g7h8i9", "hub_pending", True, "CT Connect", None, "", False, None, [("Solitude", "Modern Horizons 2", 1, "21.00", "Slightly Played")]),
+            (9000004, "20261102j1k2l3", "sent", False, "budgetbrewer", ("Jonas Weber", "Hauptstr. 5", "10115", "Berlin", "", "Germany", "DE"), "Tracked Letter", True, None, [("Thoughtseize", "Double Masters", 1, "12.00", "Near Mint")]),
+        ]
+        for ct_id, code, state, ct0, buyer, addr, method, tracked, packing, lines in orders:
+            name, street, zip_code, city, prov, country, cc = addr or ("", "", "", "", "", "", "")
+            order, _ = Order.objects.update_or_create(ct_id=ct_id, defaults={
+                "code": code, "state": state, "via_cardtrader_zero": ct0, "buyer_username": buyer,
+                "ship_name": name, "ship_street": street, "ship_zip": zip_code, "ship_city": city,
+                "ship_province": prov, "ship_country": country, "ship_country_code": cc,
+                "shipping_method": method, "tracked": tracked, "packing_number": packing,
+                "size": sum(l[2] for l in lines), "currency": "EUR",
+                "total": sum(Decimal(l[3]) * l[2] for l in lines),
+                "paid_at": now - timedelta(days=1 if state != "sent" else 6),
+                "sent_at": now - timedelta(days=5) if state == "sent" else None,
+                "tracking_code": "RR123456789IT" if state == "sent" else "",
+                "stock_applied": True,
+            })
+            for i, (card_name, expansion, qty, price, cond) in enumerate(lines, start=1):
+                OrderItem.objects.update_or_create(order=order, ct_id=ct_id * 10 + i, defaults={
+                    "name": card_name, "expansion": expansion, "quantity": qty,
+                    "price": Decimal(price), "condition": cond, "language": "EN",
+                })
 
         if not SyncLog.objects.exists():
             SyncLog.objects.create(message="CardTrader: 6 listings published")

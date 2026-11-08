@@ -1,6 +1,6 @@
 """Design tokens that depend on data (color pips, status badges)."""
 
-from .models import CollectionItem, Color, Listing
+from .models import CollectionItem, Color, Listing, Order
 
 PIP_COLORS = {
     Color.WHITE: "#F3EBD3",
@@ -38,3 +38,34 @@ def item_badge(status):
 
 def listing_badge(status):
     return {"label": Listing.Status(status).label, "tone": _LISTING_BADGES[status]}
+
+
+_S = Order.State
+# Shipments page tabs: key -> (label, states shown)
+ORDER_TABS = {
+    "to_ship": ("To ship", [_S.PAID]),
+    "ct_zero": ("CT Zero pending", [_S.HUB_PENDING]),
+    "shipped": ("Shipped", [_S.SENT]),
+    "completed": ("Completed", [_S.ARRIVED, _S.DONE]),
+    "issues": ("Issues", [_S.REQUEST_FOR_CANCEL, _S.CANCELED, _S.LOST]),
+}
+
+_ORDER_TONES = {
+    _S.PAID: "pending",
+    _S.HUB_PENDING: "gold",
+    _S.SENT: "live",
+    _S.ARRIVED: "live",
+    _S.DONE: "neutral",
+    _S.CLOSED: "neutral",
+    _S.REQUEST_FOR_CANCEL: "danger",
+    _S.CANCELED: "danger",
+    _S.LOST: "danger",
+}
+
+
+def order_badge(state):
+    try:
+        label = Order.State(state).label
+    except ValueError:
+        label = state.replace("_", " ").capitalize()
+    return {"label": label, "tone": _ORDER_TONES.get(state, "neutral")}

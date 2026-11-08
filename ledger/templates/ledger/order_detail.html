@@ -1,0 +1,95 @@
+{% extends "theme/base.html" %}
+{% block title %}Order #{{ order.code }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow no-print"><a href="{% url 'ledger:shipments' %}" style="color:inherit;text-decoration:none">Shipments</a></div>
+    <h1>Order #{{ order.code }}</h1>
+    <div class="sub" style="margin-top:6px">
+      {% if order.packing_number and order.can_ship %}Pack {{ order.packing_number }} · {% endif %}{{ order.size }} card{{ order.size|pluralize }}{% if order.paid_at %} · paid {{ order.paid_at|date:"j M Y H:i" }}{% endif %}{% if order.via_cardtrader_zero %} · CardTrader Zero{% endif %}
+    </div>
+  </div>
+  <div class="actions no-print">
+    <span class="badge badge-{{ badge.tone }}">{{ badge.label }}</span>
+    <button type="button" class="btn" onclick="window.print()">Print packing slip</button>
+  </div>
+</header>
+
+<div class="detail-grid">
+  <section class="box" aria-labelledby="ship-to">
+    <h2 id="ship-to">Ship to</h2>
+    {% if order.address_lines %}
+    <address class="address">
+      {% for line in order.address_lines %}<div{% if forloop.first %} class="address-name"{% endif %}>{{ line }}</div>{% endfor %}
+    </address>
+    {% else %}
+    <p class="hint" style="margin:0">No shipping address on this order.</p>
+    {% endif %}
+    {% if order.ship_note %}<div class="note">Note from buyer: {{ order.ship_note }}</div>{% endif %}
+    <dl class="facts">
+      <div><dt>Buyer</dt><dd>{{ order.buyer_username|default:"—" }}</dd></div>
+      <div><dt>Contact</dt><dd>{% if order.buyer_email %}<a href="mailto:{{ order.buyer_email }}">{{ order.buyer_email }}</a>{% endif %}{% if order.buyer_phone %}<div>{{ order.buyer_phone }}</div>{% endif %}{% if not order.buyer_email and not order.buyer_phone %}—{% endif %}</dd></div>
+      <div><dt>Shipping method</dt><dd>{{ order.shipping_method|default:"—" }}{% if order.max_shipping_days %}<div class="sub">up to {{ order.max_shipping_days }} days</div>{% endif %}</dd></div>
+      <div><dt>Tracking</dt><dd class="mono">{{ order.tracking_code|default:"—" }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="box no-print" aria-labelledby="ship-title">
+    <h2 id="ship-title">Shipping</h2>
+    {% if order.can_ship %}
+    <form method="post" action="{% url 'ledger:order_ship' order.pk %}" class="inline-form">
+      {% csrf_token %}
+      <div class="field">
+        <label for="id_tracking_code">Tracking code{% if order.via_cardtrader_zero or order.tracked %} (required){% else %} (optional){% endif %}</label>
+        {{ form.tracking_code }}
+      </div>
+      <button type="submit" name="save_tracking" value="1" class="btn">Save code</button>
+      <button type="submit" class="btn btn-primary">Mark as shipped</button>
+    </form>
+    <p class="hint" style="margin:0">“Mark as shipped” saves the tracking code on CardTrader, then moves the order to Shipped.{% if order.via_cardtrader_zero %} CardTrader Zero orders must have a tracking code before shipping.{% endif %}</p>
+    {% elif order.state == "hub_pending" %}
+    <p class="hint" style="margin:0">Sold through CardTrader Zero: set this card aside. CardTrader will merge it into the weekly order to send to the hub.</p>
+    {% elif order.sent_at %}
+    <p style="margin:0">Shipped on {{ order.sent_at|date:"j M Y H:i" }}{% if order.tracking_code %} with tracking <span class="mono">{{ order.tracking_code }}</span>{% endif %}.</p>
+    {% else %}
+    <p class="hint" style="margin:0">This order is {{ order.state_label|lower }}: no shipping action available.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="section" aria-labelledby="items-title">
+  <div class="section-head">
+    <h2 id="items-title">Packing list</h2>
+    <span class="hint no-print">Tick each card as you pack it</span>
+  </div>
+  <div class="table-wrap">
+    <table class="check-list" style="min-width:640px">
+      <thead>
+        <tr>
+          <th scope="col"><span class="sr-only">Packed</span></th>
+          <th scope="col">Card</th>
+          <th scope="col">Cond.</th>
+          <th scope="col">Language</th>
+          <th scope="col" style="text-align:right">Qty</th>
+          <th scope="col" style="text-align:right">Price</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in order.items.all %}
+        <tr>
+          <td><input type="checkbox" id="pack-{{ it.pk }}" aria-label="Packed {{ it.name }}"></td>
+          <td><label for="pack-{{ it.pk }}" style="font-weight:500">{{ it.name }}</label>{% if it.foil %}<span class="foil-tag">Foil</span>{% endif %}<div class="sub">{{ it.expansion }}{% if it.listing %} · <a href="{% url 'ledger:item_edit' it.listing.item.pk %}">in Ledger</a>{% endif %}</div></td>
+          <td class="dim">{{ it.condition|default:"—" }}</td>
+          <td class="dim">{{ it.language|default:"—" }}</td>
+          <td class="num">{{ it.quantity }}</td>
+          <td class="num">{% if it.price is not None %}€{{ it.price|floatformat:"2g" }}{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="empty">No items on this order.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if order.total is not None %}<div class="table-foot"><span></span><span>Total to you <strong class="mono" style="color:var(--text)">€{{ order.total|floatformat:"2g" }}</strong></span></div>{% endif %}
+</section>
+{% endblock %}

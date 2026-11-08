@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -133,3 +134,6 @@ MAILERS = {
 LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'ledger:collection'
 LOGOUT_REDIRECT_URL = 'login'
+
+# CardTrader Full API token (can also be set per service from the Sync > Settings page)
+CARDTRADER_API_TOKEN = os.environ.get('CARDTRADER_API_TOKEN', '')

@@ -1,0 +1,61 @@
+{% extends "theme/base.html" %}
+{% load humanize %}
+{% block title %}Shipments{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <div class="eyebrow">CardTrader orders</div>
+    <h1>Shipments</h1>
+  </div>
+  <div class="actions">
+    <span class="hint">{% if service.orders_synced_at %}Imported {{ service.orders_synced_at|naturaltime }}{% else %}Orders never imported{% endif %}</span>
+    <form method="post" action="{% url 'ledger:orders_sync' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary">{% include "theme/includes/sync_icon.svg" %}Import orders</button>
+    </form>
+  </div>
+</header>
+
+<section class="stats" aria-label="Shipping summary">
+  <div class="stat"><div class="stat-label">Orders to ship</div><div class="stat-value{% if stats.to_ship %} warn{% endif %}">{{ stats.to_ship }}</div></div>
+  <div class="stat"><div class="stat-label">Cards to pack</div><div class="stat-value">{{ stats.items_to_ship }}</div></div>
+  <div class="stat"><div class="stat-label">Shipped this month</div><div class="stat-value">{{ stats.shipped_month }}</div></div>
+  <div class="stat"><div class="stat-label">Sales this month</div><div class="stat-value accent">€{{ stats.revenue_month|floatformat:"2g" }}</div></div>
+</section>
+
+<nav class="tabs" aria-label="Order status">
+  {% for t in tabs %}
+  <a class="pill" href="?tab={{ t.key }}"{% if t.active %} aria-current="true"{% endif %}>{{ t.label }} <span class="tab-count">{{ t.count }}</span></a>
+  {% endfor %}
+</nav>
+
+{% if tab == "ct_zero" %}<p class="hint" style="margin:0">CardTrader Zero sales are collected here and merged by CardTrader into one order each week: ship only the merged order when it appears under “To ship”.</p>{% endif %}
+
+<section class="order-list" aria-label="Orders">
+  {% for r in rows %}
+  <a class="order-row" href="{% url 'ledger:order_detail' r.o.pk %}">
+    <div class="packing">{% if r.o.packing_number and r.o.can_ship %}<small>Pack</small>{{ r.o.packing_number }}{% else %}<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#A7A39A" stroke-width="2" aria-hidden="true"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>{% endif %}</div>
+    <div>
+      <div class="order-code">#{{ r.o.code }}</div>
+      <div class="sub">{{ r.o.buyer_username|default:"—" }}{% if r.o.via_cardtrader_zero %} · CT Zero{% endif %}</div>
+    </div>
+    <div class="hide-sm">
+      <div>{{ r.o.ship_city|default:"—" }}{% if r.o.ship_country_code %} · {{ r.o.ship_country_code }}{% endif %}</div>
+      <div class="sub">{{ r.o.shipping_method|default:"Shipping method n/a" }}{% if r.o.tracked %} · tracked{% endif %}</div>
+    </div>
+    <div class="hide-sm">
+      <div>{{ r.o.size }} card{{ r.o.size|pluralize }}</div>
+      <div class="sub">{% if r.o.sent_at %}Sent {{ r.o.sent_at|naturalday }}{% elif r.o.paid_at %}Paid {{ r.o.paid_at|naturalday }}{% endif %}</div>
+    </div>
+    <div class="order-right">
+      <span class="badge badge-{{ r.badge.tone }}">{{ r.badge.label }}</span>
+      <span class="order-total">{% if r.o.total is not None %}€{{ r.o.total|floatformat:"2g" }}{% endif %}</span>
+    </div>
+  </a>
+  {% empty %}
+  <p class="empty" style="border:1px solid var(--line);border-radius:12px;background:var(--surface);margin:0">
+    {% if tab == "to_ship" %}Nothing to ship. Use “Import orders” to fetch new sales from CardTrader.{% else %}No orders here.{% endif %}
+  </p>
+  {% endfor %}
+</section>
+{% endblock %}

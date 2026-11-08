@@ -43,6 +43,9 @@ class Card(models.Model):
     type_line = models.CharField(max_length=200, blank=True)
     set_code = models.CharField(max_length=10)
     color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
+    ct_blueprint_id = models.PositiveIntegerField(
+        "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
+    )
 
     class Meta:
         ordering = ["name", "set_code"]
@@ -106,6 +109,7 @@ class Listing(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     market_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.TO_PUBLISH)
+    ct_product_id = models.PositiveBigIntegerField("CardTrader product", null=True, blank=True, unique=True)
     sold_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -122,6 +126,7 @@ class SyncService(models.Model):
     direction = models.CharField(max_length=120, blank=True)
     api_token = models.CharField(max_length=500, blank=True)
     last_sync = models.DateTimeField(null=True, blank=True)
+    orders_synced_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name
@@ -138,6 +143,10 @@ class SyncConflict(models.Model):
     field = models.CharField(max_length=40, blank=True, help_text="Listing field that differs, e.g. 'price'")
     local_value = models.CharField(max_length=120)
     remote_value = models.CharField(max_length=120)
+    remote_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Numeric remote value (price or quantity) applied on 'Keep remote'",
+    )
     resolution = models.CharField(max_length=8, choices=Resolution.choices, default=Resolution.OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -162,3 +171,93 @@ class SyncLog(models.Model):
 
     def __str__(self):
         return self.message
+
+
+class Order(models.Model):
+    """A CardTrader sale order (you are the seller)."""
+
+    class State(models.TextChoices):
+        HUB_PENDING = "hub_pending", "CT Zero pending"
+        PAID = "paid", "To ship"
+        SENT = "sent", "Shipped"
+        ARRIVED = "arrived", "Arrived"
+        DONE = "done", "Completed"
+        REQUEST_FOR_CANCEL = "request_for_cancel", "Cancellation requested"
+        CANCELED = "canceled", "Canceled"
+        LOST = "lost", "Lost"
+        CLOSED = "closed", "Merged (CT Zero)"
+
+    ct_id = models.PositiveBigIntegerField(unique=True)
+    code = models.CharField(max_length=40)
+    state = models.CharField(max_length=24, default=State.PAID)
+    via_cardtrader_zero = models.BooleanField(default=False)
+    buyer_username = models.CharField(max_length=120, blank=True)
+    buyer_email = models.CharField(max_length=200, blank=True)
+    buyer_phone = models.CharField(max_length=40, blank=True)
+    ship_name = models.CharField(max_length=200, blank=True)
+    ship_street = models.CharField(max_length=300, blank=True)
+    ship_zip = models.CharField(max_length=20, blank=True)
+    ship_city = models.CharField(max_length=120, blank=True)
+    ship_province = models.CharField(max_length=120, blank=True)
+    ship_country = models.CharField(max_length=80, blank=True)
+    ship_country_code = models.CharField(max_length=2, blank=True)
+    ship_note = models.TextField(blank=True)
+    shipping_method = models.CharField(max_length=200, blank=True)
+    tracked = models.BooleanField(default=False)
+    tracking_code = models.CharField(max_length=120, blank=True)
+    max_shipping_days = models.PositiveIntegerField(null=True, blank=True)
+    packing_number = models.PositiveIntegerField(null=True, blank=True)
+    size = models.PositiveIntegerField(default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(null=True, blank=True)
+    stock_applied = models.BooleanField(
+        default=False, help_text="Sold quantities already removed from the Ledger"
+    )
+    raw = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-paid_at", "-ct_id"]
+
+    def __str__(self):
+        return f"#{self.code}"
+
+    @property
+    def state_label(self):
+        try:
+            return self.State(self.state).label
+        except ValueError:
+            return self.state.replace("_", " ").capitalize()
+
+    @property
+    def can_ship(self):
+        return self.state == self.State.PAID
+
+    @property
+    def address_lines(self):
+        city = " ".join(p for p in (self.ship_zip, self.ship_city, self.ship_province) if p)
+        return [l for l in (self.ship_name, self.ship_street, city, self.ship_country) if l]
+
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    ct_id = models.PositiveBigIntegerField()
+    ct_product_id = models.PositiveBigIntegerField(null=True, blank=True)
+    listing = models.ForeignKey(Listing, null=True, blank=True, on_delete=models.SET_NULL, related_name="order_items")
+    name = models.CharField(max_length=200)
+    expansion = models.CharField(max_length=200, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    condition = models.CharField(max_length=40, blank=True)
+    language = models.CharField(max_length=10, blank=True)
+    foil = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["order", "ct_id"], name="unique_order_item")]
+
+    def __str__(self):
+        return f"{self.quantity}× {self.name}"

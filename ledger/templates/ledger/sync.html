@@ -29,6 +29,8 @@
     <dl class="facts">
       <div><dt>Last sync</dt><dd class="mono">{% if s.last_sync %}{{ s.last_sync|naturalday|capfirst }}, {{ s.last_sync|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
       <div><dt>Direction</dt><dd>{{ s.direction|default:"—" }}</dd></div>
+      <div><dt>Orders imported</dt><dd class="mono">{% if s.orders_synced_at %}{{ s.orders_synced_at|naturalday|capfirst }}, {{ s.orders_synced_at|time:"H:i" }}{% else %}Never{% endif %}</dd></div>
+      <div><dt>API token</dt><dd>{% if s.token_ok %}Configured{% else %}<a href="{% url 'ledger:service_settings' s.pk %}">Not configured</a>{% endif %}</dd></div>
     </dl>
     <div class="actions" style="gap:10px">
       <form method="post" action="{% url 'ledger:publish' %}">

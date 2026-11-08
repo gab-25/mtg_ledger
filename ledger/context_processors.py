@@ -1,4 +1,4 @@
-from .models import Listing
+from .models import Listing, Order
 
 
 def sidebar(request):
@@ -6,4 +6,5 @@ def sidebar(request):
         return {}
     return {
         "pending_changes": Listing.objects.filter(status=Listing.Status.TO_PUBLISH).count(),
+        "orders_to_ship": Order.objects.filter(state=Order.State.PAID).count(),
     }
