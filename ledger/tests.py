@@ -27,14 +27,14 @@ class FakeCardTrader:
             {"id": 99, "game_id": 5, "code": "mh2", "name": "Not MTG"},
         ]
         self.blueprints = {
-            10: [{"id": 1001, "name": "Ragavan, Nimble Pilferer", "version": None},
-                 {"id": 1002, "name": "Solitude", "version": None},
-                 {"id": 1003, "name": "Urza’s Saga", "version": None},
-                 {"id": 1004, "name": "Endurance", "version": None}],
-            11: [{"id": 1101, "name": "Fable of the Mirror-Breaker", "version": "showcase"},
-                 {"id": 1100, "name": "Fable of the Mirror-Breaker", "version": None}],
-            12: [{"id": 1201, "name": "Counterspell", "version": None}],
-            13: [{"id": 1301, "name": "Sheoldred, the Apocalypse", "version": None}],
+            10: [{"id": 1001, "name": "Ragavan, Nimble Pilferer", "version": None, "fixed_properties": {"collector_number": "138"}},
+                 {"id": 1002, "name": "Solitude", "version": None, "fixed_properties": {"collector_number": "32"}},
+                 {"id": 1003, "name": "Urza’s Saga", "version": None, "fixed_properties": {"collector_number": "259"}},
+                 {"id": 1004, "name": "Endurance", "version": None, "fixed_properties": {"collector_number": "157"}}],
+            11: [{"id": 1101, "name": "Fable of the Mirror-Breaker", "version": "showcase", "fixed_properties": {"collector_number": "356"}},
+                 {"id": 1100, "name": "Fable of the Mirror-Breaker", "version": None, "fixed_properties": {"collector_number": "141"}}],
+            12: [{"id": 1201, "name": "Counterspell", "version": None, "fixed_properties": {"collector_number": "045"}}],
+            13: [{"id": 1301, "name": "Sheoldred, the Apocalypse", "version": None, "fixed_properties": {"collector_number": "107"}}],
         }
         self.products = {}
         self.orders = []

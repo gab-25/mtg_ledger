@@ -2,8 +2,11 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 
-from .catalog import normalize_number
-from .models import Card
+from decimal import Decimal
+
+from . import services
+from .catalog import merge_cards, normalize_number
+from .models import Card, CollectionItem, Listing
 from .tests import LedgerTestCase
 
 
@@ -51,3 +54,51 @@ class PrintingFormCsvTest(LedgerTestCase):
         self.assertEqual(normalize_number("012a"), "12A")
         self.assertEqual(normalize_number(" 7 "), "7")
         self.assertEqual(normalize_number(""), "")
+
+
+class ResolvePrintingTest(LedgerTestCase):
+    def resolve(self, cards):
+        return services.resolve_blueprints(self.ct.client(), cards)
+
+    def test_resolve_by_number_picks_showcase(self):
+        card = Card.objects.create(name="Fable of the Mirror-Breaker", set_code="NEO", collector_number="356")
+        self.assertEqual(self.resolve([card]), [])
+        card.refresh_from_db()
+        self.assertEqual(card.ct_blueprint_id, 1101)
+
+    def test_resolve_legacy_fills_number(self):
+        card = Card.objects.get(name="Counterspell", set_code="DMR")
+        self.resolve([card])
+        card.refresh_from_db()
+        self.assertEqual(card.ct_blueprint_id, 1201)
+        self.assertEqual(card.collector_number, "45")
+
+    def test_resolve_merges_into_existing_printing(self):
+        legacy = Card.objects.get(name="Counterspell", set_code="DMR")  # demo: NM/IT x4 @0.80, listed
+        printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
+                                       ct_blueprint_id=1201)
+        CollectionItem.objects.create(card=printing, condition="NM", language="IT", quantity=2,
+                                      price=Decimal("1.00"))
+        self.assertEqual(self.resolve([legacy]), [])
+        self.assertFalse(Card.objects.filter(pk=legacy.pk).exists())
+        item = CollectionItem.objects.get(card=printing, condition="NM", language="IT", foil=False)
+        self.assertEqual(item.quantity, 6)
+        self.assertEqual(item.price, Decimal("1.00"))
+        self.assertTrue(Listing.objects.filter(item=item).exists())  # the legacy listing follows the copies
+
+    def test_merge_refuses_two_live_listings(self):
+        legacy = Card.objects.get(name="Counterspell", set_code="DMR")
+        printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
+                                       ct_blueprint_id=1201)
+        item = CollectionItem.objects.create(card=printing, condition="NM", language="IT", quantity=1)
+        Listing.objects.create(item=item, quantity=1, price=Decimal("1.00"))
+        self.assertFalse(merge_cards(legacy, printing))
+        self.assertTrue(Card.objects.filter(pk=legacy.pk).exists())
+        self.assertEqual(self.resolve([legacy]), [legacy])
+
+    def test_publish_after_merge_uses_surviving_printing(self):
+        printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
+                                       ct_blueprint_id=1201)
+        self.client.post(reverse("ledger:publish"))
+        listing = Listing.objects.get(item__card=printing)
+        self.assertEqual(listing.status, Listing.Status.PUBLISHED)
