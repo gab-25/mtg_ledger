@@ -13,8 +13,14 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load variables from a local .env file, if present. Variables already set in
+# the environment (e.g. by Docker Compose) take precedence.
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -31,6 +37,10 @@ DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() in ('1', 'true', 'yes')
 
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',') if o]
+
+# Behind a reverse proxy that terminates HTTPS: trust its X-Forwarded-Proto header (only enable when the proxy sets it).
+if os.environ.get('DJANGO_BEHIND_HTTPS_PROXY', '').lower() in ('1', 'true', 'yes'):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -150,3 +160,7 @@ LOGOUT_REDIRECT_URL = 'login'
 
 # CardTrader Full API token (can also be set per service from the Sync > Settings page)
 CARDTRADER_API_TOKEN = os.environ.get('CARDTRADER_API_TOKEN', '')
+
+# Card recognition from the camera (vision model on OpenRouter)
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'google/gemini-2.5-flash')

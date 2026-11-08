@@ -1,11 +1,11 @@
 from django.contrib import admin
 
-from .models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, Expansion, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 @admin.register(Card)
 class CardAdmin(admin.ModelAdmin):
-    list_display = ["name", "set_code", "type_line", "color", "ct_blueprint_id"]
+    list_display = ["name", "set_code", "collector_number", "type_line", "color", "ct_blueprint_id"]
     list_filter = ["color", "set_code"]
     search_fields = ["name", "type_line"]
 
@@ -54,3 +54,16 @@ class OrderAdmin(admin.ModelAdmin):
     search_fields = ["code", "buyer_username", "ship_name"]
     inlines = [OrderItemInline]
     readonly_fields = ["raw"]
+
+
+@admin.register(Expansion)
+class ExpansionAdmin(admin.ModelAdmin):
+    list_display = ["code", "name", "ct_id", "blueprints_synced_at"]
+    search_fields = ["code", "name"]
+
+
+@admin.register(Blueprint)
+class BlueprintAdmin(admin.ModelAdmin):
+    list_display = ["name", "expansion", "collector_number", "version", "rarity", "ct_id"]
+    search_fields = ["name", "expansion__code"]
+    list_select_related = ["expansion"]

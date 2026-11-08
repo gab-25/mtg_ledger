@@ -1,6 +1,18 @@
 from django import forms
 
+from .catalog import normalize_number
 from .models import Card, CollectionItem, Color, Listing
+
+
+def get_or_create_card(name, set_code, collector_number="", **defaults):
+    """The printing (set + collector number) when the number is known, else the legacy name + set row."""
+    if collector_number:
+        card, _ = Card.objects.get_or_create(
+            set_code=set_code, collector_number=collector_number, defaults={"name": name, **defaults}
+        )
+    else:
+        card, _ = Card.objects.get_or_create(name=name, set_code=set_code, collector_number="", defaults=defaults)
+    return card
 
 
 class CardItemForm(forms.ModelForm):
@@ -8,10 +20,11 @@ class CardItemForm(forms.ModelForm):
 
     name = forms.CharField(max_length=200)
     set_code = forms.CharField(label="Set", max_length=10)
+    collector_number = forms.CharField(label="Collector number", max_length=12, required=False)
     type_line = forms.CharField(label="Type", max_length=200, required=False)
     color = forms.ChoiceField(choices=Color.choices, initial=Color.COLORLESS)
 
-    field_order = ["name", "set_code", "type_line", "color", "condition", "language", "foil", "quantity", "price"]
+    field_order = ["name", "set_code", "collector_number", "type_line", "color", "condition", "language", "foil", "quantity", "price"]
 
     class Meta:
         model = CollectionItem
@@ -22,18 +35,21 @@ class CardItemForm(forms.ModelForm):
         if self.instance.pk:
             card = self.instance.card
             self.initial.update(
-                name=card.name, set_code=card.set_code, type_line=card.type_line, color=card.color
+                name=card.name, set_code=card.set_code, collector_number=card.collector_number,
+                type_line=card.type_line, color=card.color,
             )
 
     def clean_set_code(self):
         return self.cleaned_data["set_code"].strip().upper()
 
+    def clean_collector_number(self):
+        return normalize_number(self.cleaned_data["collector_number"])
+
     def save(self, commit=True):
         data = self.cleaned_data
-        card, _ = Card.objects.get_or_create(
-            name=data["name"].strip(),
-            set_code=data["set_code"],
-            defaults={"type_line": data["type_line"], "color": data["color"]},
+        card = get_or_create_card(
+            data["name"].strip(), data["set_code"], data["collector_number"],
+            type_line=data["type_line"], color=data["color"],
         )
         changed = False
         for attr in ("type_line", "color"):

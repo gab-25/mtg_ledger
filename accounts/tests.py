@@ -109,3 +109,36 @@ class CardTraderTokenTest(TestCase):
     def test_sync_settings_links_to_profile(self, _):
         resp = self.client.get(reverse("ledger:sync"))
         self.assertContains(resp, f'href="{self.url}#cardtrader"')
+
+
+class OpenRouterKeyTest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("gab", password="pw")
+        self.client.force_login(self.user)
+        self.url = reverse("accounts:profile")
+
+    @mock.patch.object(services, "check_openrouter_key")
+    def test_openrouter_key_saved(self, check):
+        resp = self.client.post(self.url, {"action": "openrouter", "openrouter-key": "sk-or-secret"})
+        self.assertRedirects(resp, self.url + "#openrouter", fetch_redirect_response=False)
+        check.assert_called_once_with("sk-or-secret")
+        self.assertEqual(services.get_openrouter().api_token, "sk-or-secret")
+        page = self.client.get(self.url)
+        self.assertNotContains(page, "sk-or-secret")
+        self.assertContains(page, "OpenRouter")
+
+    @mock.patch.object(services, "check_openrouter_key")
+    def test_openrouter_key_rejected(self, check):
+        from ledger.openrouter import OpenRouterError
+
+        check.side_effect = OpenRouterError("401")
+        resp = self.client.post(self.url, {"action": "openrouter", "openrouter-key": "bad"})
+        self.assertContains(resp, "OpenRouter rejected this key")
+        self.assertEqual(services.get_openrouter().api_token, "")
+
+    def test_remove_openrouter_key(self):
+        service = services.get_openrouter()
+        service.api_token = "k"
+        service.save()
+        self.client.post(self.url, {"action": "openrouter_remove"})
+        self.assertEqual(services.get_openrouter().api_token, "")

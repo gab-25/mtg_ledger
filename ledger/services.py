@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -22,6 +22,9 @@ from .cardtrader import (
     CardTraderError,
     money,
 )
+from .openrouter import OpenRouterClient
+from .catalog import blueprint_number, merge_cards, normalize_number
+from .forms import get_or_create_card
 from .models import (
     Card,
     CollectionItem,
@@ -36,7 +39,8 @@ from .models import (
     SyncService,
 )
 
-CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price"]
+OPENROUTER = "OpenRouter"
+CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price", "number"]
 CARDTRADER = "CardTrader"
 
 
@@ -77,6 +81,45 @@ def remove_api_token():
     _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING)
 
 
+def get_openrouter():
+    service, _ = SyncService.objects.get_or_create(
+        name=OPENROUTER, defaults={"description": "Card recognition", "direction": "Camera → OpenRouter (API)"},
+    )
+    return service
+
+
+def openrouter_key(service=None):
+    service = service or get_openrouter()
+    return service.api_token or getattr(settings, "OPENROUTER_API_KEY", "")
+
+
+def make_openrouter(key=None):
+    """Build the OpenRouter client. Tests patch this to inject a fake."""
+    return OpenRouterClient(key or openrouter_key(), model=settings.OPENROUTER_MODEL)
+
+
+def check_openrouter_key(key):
+    with make_openrouter(key) as client:
+        client.check_key()
+
+
+def set_openrouter_key(key):
+    """Check the key with OpenRouter, then store it. Raises OpenRouterError if rejected."""
+    key = key.strip()
+    check_openrouter_key(key)
+    service = get_openrouter()
+    service.api_token = key
+    service.save(update_fields=["api_token"])
+    _log(f"{OPENROUTER}: API key connected")
+
+
+def remove_openrouter_key():
+    service = get_openrouter()
+    service.api_token = ""
+    service.save(update_fields=["api_token"])
+    _log(f"{OPENROUTER}: API key removed", SyncLog.Level.WARNING)
+
+
 def _log(message, level=SyncLog.Level.OK):
     SyncLog.objects.create(message=message[:300], level=level)
 
@@ -97,6 +140,7 @@ def export_csv(items, stream):
             "1" if item.foil else "0",
             item.quantity,
             f"{item.price:.2f}",
+            item.card.collector_number,
         ])
 
 
@@ -140,13 +184,12 @@ def import_csv(uploaded_file):
             if quantity < 0 or price < 0:
                 raise CsvImportError(f"Line {line}: quantity and price must be positive")
 
-            card, _ = Card.objects.get_or_create(
-                name=row["name"],
-                set_code=row["set"].upper(),
-                defaults={
-                    "type_line": row.get("type", ""),
-                    "color": _choice(row.get("color"), Color, Color.COLORLESS, "color", line),
-                },
+            card = get_or_create_card(
+                row["name"],
+                row["set"].upper(),
+                normalize_number(row.get("number", "")),
+                type_line=row.get("type", ""),
+                color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
                 card=card,
@@ -188,19 +231,47 @@ def resolve_blueprints(client, cards):
         if expansion_id is None:
             unmatched.extend(set_cards)
             continue
-        by_name = {}
+        by_name, by_number = {}, {}
         for bp in client.blueprints(expansion_id):
             # Several blueprints can share a name (alternate versions): keep the base one.
             key = bp["name"].casefold()
             if key not in by_name or (by_name[key].get("version") and not bp.get("version")):
                 by_name[key] = bp
+            number = blueprint_number(bp)
+            if number:
+                by_number[number] = bp
         for card in set_cards:
-            bp = by_name.get(card.name.casefold())
+            if card.collector_number:
+                bp = by_number.get(card.collector_number)
+            else:
+                bp = by_name.get(card.name.casefold())
             if bp is None:
                 unmatched.append(card)
                 continue
+            number = blueprint_number(bp) or card.collector_number
+            existing = (
+                Card.objects.exclude(pk=card.pk)
+                .filter(Q(ct_blueprint_id=bp["id"]) | Q(set_code=card.set_code, collector_number=number) & ~Q(collector_number=""))
+                .first()
+            )
+            if existing is not None and existing.ct_blueprint_id not in (None, bp["id"]):
+                _log(f"{card} matches #{number}, already used by {existing} (another printing): fix it by hand",
+                     SyncLog.Level.WARNING)
+                unmatched.append(card)
+                continue
+            if existing is not None:
+                if not merge_cards(card, existing):
+                    _log(f"{card} duplicates {existing} but both have live listings: merge them by hand",
+                         SyncLog.Level.WARNING)
+                    unmatched.append(card)
+                    continue
+                if not existing.ct_blueprint_id:
+                    existing.ct_blueprint_id = bp["id"]
+                    existing.save(update_fields=["ct_blueprint_id"])
+                continue
             card.ct_blueprint_id = bp["id"]
-            card.save(update_fields=["ct_blueprint_id"])
+            card.collector_number = number
+            card.save(update_fields=["ct_blueprint_id", "collector_number"])
     return unmatched
 
 
@@ -253,9 +324,12 @@ def publish_pending():
 
     with make_client(service) as client:
         unmatched = {c.pk for c in resolve_blueprints(client, {l.item.card for l in listings})}
+        # Resolution may merge duplicate printings: reload so listings point at the surviving cards.
+        listings = list(
+            Listing.objects.filter(pk__in=[l.pk for l in listings]).select_related("item__card")
+        )
         to_create, to_update = [], []
         for listing in listings:
-            listing.item.card.refresh_from_db(fields=["ct_blueprint_id"])
             if listing.ct_product_id:
                 to_update.append(listing)
             elif listing.item.card_id in unmatched or not listing.item.card.ct_blueprint_id:

@@ -107,6 +107,10 @@ class CardTraderClient:
         data = self._get("/marketplace/products", **params) or {}
         return data.get(str(blueprint_id), [])
 
+    def marketplace_by_expansion(self, expansion_id):
+        """Cheapest products of every blueprint in an expansion: {"<blueprint_id>": [product, ...]}."""
+        return self._get("/marketplace/products", expansion_id=expansion_id) or {}
+
     # --- inventory -----------------------------------------------------------
 
     def my_products(self, **params):

@@ -88,6 +88,39 @@
       <button type="submit" class="btn btn-danger" onclick="return confirm('Disconnect CardTrader? Publishing and syncing will stop until a new token is added.')">Remove token</button>
     </form>
     {% endif %}
+
+  <div class="box" id="openrouter" style="margin-top:16px">
+    <div class="connection-head">
+      <div>
+        <div class="profile-name" style="font-size:22px">{{ openrouter.name }}</div>
+        <div class="sub">Recognises cards from the camera with a vision model ({{ openrouter_model }}).</div>
+      </div>
+      {% if openrouter_saved or openrouter_from_env %}
+      <span class="badge badge-ok"><span class="pill-dot"></span>Connected</span>
+      {% else %}
+      <span class="badge badge-pending"><span class="pill-dot"></span>Not connected</span>
+      {% endif %}
+    </div>
+
+    {% if openrouter_from_env %}
+    <p class="hint" style="margin:0">Using the key from the <code>OPENROUTER_API_KEY</code> environment variable. A key saved here takes precedence.</p>
+    {% endif %}
+
+    <form method="post" action="{% url 'accounts:profile' %}#openrouter" class="inline-form" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="openrouter">
+      {% include "theme/includes/field.html" with field=openrouter_form.key %}
+      <button type="submit" class="btn btn-primary">{% if openrouter_saved %}Replace key{% else %}Connect{% endif %}</button>
+    </form>
+
+    {% if openrouter_saved %}
+    <form method="post" action="{% url 'accounts:profile' %}#openrouter" class="connection-row" style="padding:0">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="openrouter_remove">
+      <span class="hint" style="flex:1">A key is saved. It is never shown again; replace it or remove it.</span>
+      <button type="submit" class="btn btn-danger" onclick="return confirm('Disconnect OpenRouter? Card scanning will stop until a new key is added.')">Remove key</button>
+    </form>
+    {% endif %}
   </div>
 </section>
 

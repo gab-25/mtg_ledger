@@ -1,0 +1,26 @@
+<div class="scan-toast{% if error %} is-error{% endif %}" id="scan-toast" role="status" aria-live="polite"{% if not line and not state %} hidden{% endif %}>
+  <div class="scan-toast-text">
+    <span class="scan-toast-state">{{ state }}</span>
+    {% if help_url %}<a class="scan-toast-link" href="{{ help_url }}">Open Profile and settings</a>{% endif %}
+    {% if line %}
+    <span class="scan-toast-name">{{ line.blueprint.name }}</span>
+    <span class="mono sub">{{ line.blueprint.expansion.code|upper }} {{ line.blueprint.collector_number }} · {{ line.condition }} · {{ line.language }}{% if line.foil %} · Foil{% endif %}</span>
+    {% endif %}
+  </div>
+  {% if line %}
+  <div class="scan-toast-actions">
+    <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{% url 'ledger:scan_camera' session.uuid %}">
+      <input type="hidden" name="foil" value="{% if line.foil %}0{% else %}1{% endif %}">
+      <button type="submit" class="btn btn-sm" aria-pressed="{% if line.foil %}true{% else %}false{% endif %}">Foil</button>
+    </form>
+    <form method="post" action="{% url 'ledger:scan_line_update' line.uuid %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{% url 'ledger:scan_camera' session.uuid %}">
+      <input type="hidden" name="undo" value="1">
+      <button type="submit" class="btn btn-sm btn-ghost">Undo</button>
+    </form>
+  </div>
+  {% endif %}
+</div>

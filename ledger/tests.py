@@ -5,9 +5,10 @@ from unittest import mock
 
 import httpx
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from . import services
@@ -27,14 +28,14 @@ class FakeCardTrader:
             {"id": 99, "game_id": 5, "code": "mh2", "name": "Not MTG"},
         ]
         self.blueprints = {
-            10: [{"id": 1001, "name": "Ragavan, Nimble Pilferer", "version": None},
-                 {"id": 1002, "name": "Solitude", "version": None},
-                 {"id": 1003, "name": "Urza’s Saga", "version": None},
-                 {"id": 1004, "name": "Endurance", "version": None}],
-            11: [{"id": 1101, "name": "Fable of the Mirror-Breaker", "version": "showcase"},
-                 {"id": 1100, "name": "Fable of the Mirror-Breaker", "version": None}],
-            12: [{"id": 1201, "name": "Counterspell", "version": None}],
-            13: [{"id": 1301, "name": "Sheoldred, the Apocalypse", "version": None}],
+            10: [{"id": 1001, "name": "Ragavan, Nimble Pilferer", "version": None, "fixed_properties": {"collector_number": "138"}},
+                 {"id": 1002, "name": "Solitude", "version": None, "fixed_properties": {"collector_number": "32"}},
+                 {"id": 1003, "name": "Urza’s Saga", "version": None, "fixed_properties": {"collector_number": "259"}},
+                 {"id": 1004, "name": "Endurance", "version": None, "fixed_properties": {"collector_number": "157"}}],
+            11: [{"id": 1101, "name": "Fable of the Mirror-Breaker", "version": "showcase", "fixed_properties": {"collector_number": "356"}},
+                 {"id": 1100, "name": "Fable of the Mirror-Breaker", "version": None, "fixed_properties": {"collector_number": "141"}}],
+            12: [{"id": 1201, "name": "Counterspell", "version": None, "fixed_properties": {"collector_number": "045"}}],
+            13: [{"id": 1301, "name": "Sheoldred, the Apocalypse", "version": None, "fixed_properties": {"collector_number": "107"}}],
         }
         self.products = {}
         self.orders = []
@@ -42,6 +43,7 @@ class FakeCardTrader:
         self.jobs = {}
         self.calls = []
         self.fail_blueprints = set()
+        self.fail_marketplace = False
 
     def handler(self, request):
         path = request.url.path.removeprefix("/api/v2")
@@ -79,6 +81,19 @@ class FakeCardTrader:
             if pid not in self.products:
                 return httpx.Response(404, json={"error_code": "not_found", "extra": {"message": "gone"}})
             return httpx.Response(200, json={"result": "ok", "resource": self.products.pop(pid)})
+        if path == "/marketplace/products" and self.fail_marketplace:
+            return httpx.Response(500, json={"error_code": "boom"})
+        if path == "/marketplace/products" and "expansion_id" in params:
+            def offer(cents, user, cond, lang, foil):
+                return {"price": {"cents": cents, "currency": "EUR"}, "user": {"id": user},
+                        "properties_hash": {"condition": cond, "mtg_language": lang, "mtg_foil": foil}}
+            return httpx.Response(200, json={str(bp["id"]): [
+                offer(100, 77, "Near Mint", "it", False),  # our own offer: ignored
+                offer(300, 2, "Near Mint", "it", False),
+                offer(200, 3, "Slightly Played", "it", False),
+                offer(900, 4, "Near Mint", "en", True),
+                offer(500, 5, "Near Mint", "tlh", False),  # unknown language: skipped
+            ] for bp in self.blueprints.get(int(params["expansion_id"]), [])})
         if path == "/marketplace/products":
             bp = params["blueprint_id"]
             return httpx.Response(200, json={bp: [
@@ -133,8 +148,11 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
     }
 
 
+# Tests never use the real keys from the environment or a local .env file.
+@override_settings(CARDTRADER_API_TOKEN="", OPENROUTER_API_KEY="")
 class LedgerTestCase(TestCase):
     def setUp(self):
+        cache.clear()
         call_command("seed_demo", "--reset", stdout=StringIO())
         self.user = get_user_model().objects.create_user("gab", password="pw")
         self.client.force_login(self.user)

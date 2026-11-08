@@ -1,6 +1,8 @@
+import uuid
 from decimal import Decimal
 
 from django.db import models
+from django.db.models import Q
 
 
 class Color(models.TextChoices):
@@ -42,6 +44,7 @@ class Card(models.Model):
     name = models.CharField(max_length=200)
     type_line = models.CharField(max_length=200, blank=True)
     set_code = models.CharField(max_length=10)
+    collector_number = models.CharField(max_length=12, blank=True, default="")
     color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
@@ -50,10 +53,21 @@ class Card(models.Model):
     class Meta:
         ordering = ["name", "set_code"]
         constraints = [
-            models.UniqueConstraint(fields=["name", "set_code"], name="unique_card_printing"),
+            models.UniqueConstraint(
+                fields=["set_code", "collector_number"], condition=~Q(collector_number=""),
+                name="unique_card_set_number",
+            ),
+            models.UniqueConstraint(
+                fields=["name", "set_code"], condition=Q(collector_number=""), name="unique_card_legacy_name_set",
+            ),
+            models.UniqueConstraint(
+                fields=["ct_blueprint_id"], condition=Q(ct_blueprint_id__isnull=False), name="unique_card_blueprint",
+            ),
         ]
 
     def __str__(self):
+        if self.collector_number:
+            return f"{self.name} ({self.set_code} #{self.collector_number})"
         return f"{self.name} ({self.set_code})"
 
 
@@ -261,3 +275,132 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity}× {self.name}"
+
+
+class Expansion(models.Model):
+    """A CardTrader MTG expansion (local catalog copy)."""
+
+    ct_id = models.PositiveIntegerField("CardTrader expansion", unique=True)
+    code = models.CharField(max_length=10, db_index=True)
+    name = models.CharField(max_length=200)
+    blueprints_synced_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.code.upper()} · {self.name}"
+
+
+class Blueprint(models.Model):
+    """A CardTrader blueprint: one printing of a card (local catalog copy)."""
+
+    ct_id = models.PositiveIntegerField("CardTrader blueprint", unique=True)
+    expansion = models.ForeignKey(Expansion, on_delete=models.CASCADE, related_name="blueprints")
+    name = models.CharField(max_length=200, db_index=True)
+    collector_number = models.CharField(max_length=12, blank=True)
+    version = models.CharField(max_length=80, blank=True)
+    rarity = models.CharField(max_length=40, blank=True)
+    image_url = models.URLField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["expansion__name", "name"]
+
+    def __str__(self):
+        number = f" #{self.collector_number}" if self.collector_number else ""
+        return f"{self.name} ({self.expansion.code.upper()}{number})"
+
+
+class MarketPrice(models.Model):
+    """Cheapest CardTrader offer for a printing in a given language/foil/condition (cache)."""
+
+    blueprint_ct_id = models.PositiveIntegerField()
+    language = models.CharField(max_length=3, choices=Language.choices)
+    foil = models.BooleanField(default=False)
+    condition = models.CharField(max_length=2, choices=Condition.choices)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    fetched_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["blueprint_ct_id", "language", "foil", "condition"], name="unique_market_price"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.blueprint_ct_id} {self.language} {self.condition}{' foil' if self.foil else ''}: {self.price}"
+
+
+class ScanSession(models.Model):
+    """A camera scanning session: a draft of cards to add to the collection."""
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        SAVED = "saved", "Saved"
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    expansion = models.ForeignKey(Expansion, null=True, blank=True, on_delete=models.SET_NULL)
+    default_condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
+    sale_threshold = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=5, choices=Status.choices, default=Status.OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Scan session {self.pk} ({self.expansion or 'all expansions'})"
+
+
+class ScanLine(models.Model):
+    """One draft row of a scan session: copies of a printing with the same language/foil/condition."""
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    session = models.ForeignKey(ScanSession, on_delete=models.CASCADE, related_name="lines")
+    blueprint = models.ForeignKey(Blueprint, null=True, blank=True, on_delete=models.PROTECT)
+    language = models.CharField(max_length=3, choices=Language.choices, blank=True)
+    foil = models.BooleanField(default=False)
+    condition = models.CharField(max_length=2, choices=Condition.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    for_sale = models.BooleanField(null=True, blank=True, help_text="Empty: follow the session threshold")
+    needs_confirmation = models.BooleanField(default=False)
+    candidates = models.JSONField(default=list, blank=True, help_text="Blueprint ct_ids to choose from")
+    frame = models.BinaryField(null=True, blank=True)
+    type_line = models.CharField(max_length=200, blank=True)
+    color = models.CharField(max_length=1, choices=Color.choices, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self):
+        return f"{self.quantity}× {self.blueprint or 'unconfirmed card'}"
+
+    @property
+    def listed(self):
+        if self.price is None:
+            return False
+        if self.for_sale is not None:
+            return self.for_sale
+        threshold = self.session.sale_threshold
+        return threshold is not None and self.price > threshold
+
+
+class ScanCapture(models.Model):
+    """One photo sent by the phone, so a retried upload is never processed (or paid) twice."""
+
+    session = models.ForeignKey(ScanSession, on_delete=models.CASCADE, related_name="captures")
+    capture_id = models.CharField(max_length=64)
+    line = models.ForeignKey(ScanLine, null=True, blank=True, on_delete=models.SET_NULL, related_name="captures")
+    done = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["session", "capture_id"], name="unique_scan_capture")]
+
+    def __str__(self):
+        return f"{self.capture_id} → {self.line_id or '-'}"

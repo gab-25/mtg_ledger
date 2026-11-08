@@ -55,7 +55,9 @@ docker run -p 8000:8000 \
 ```
 
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
-`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`.
+`DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
+reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
+`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
 Migrations run at container start (`docker-entrypoint.sh`) before any command.
 
 ## CardTrader
@@ -74,6 +76,57 @@ Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/a
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
 
+## Scanning cards with the camera
+
+**Collection → Scan cards** opens a phone-friendly flow: pick an expansion (or *All expansions*) and a default
+condition, then frame one card at a time and tap the shutter. The photo is recognised by a vision model on
+OpenRouter, matched against the local CardTrader catalog and added to a draft.
+Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged), lets you set a
+"list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
+are created as *To publish*).
+
+- Connect OpenRouter from **Profile and settings → Connected services** (or export `OPENROUTER_API_KEY`);
+  `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
+- The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
+- The camera page works on **smartphones only** (webcams can't focus on a card up close). A session started on a
+  computer shows a **QR code** that opens the same session on the phone; Review, confirmation and search work on
+  both.
+- The browser only gives camera access over **HTTPS**.
+
+### Trying it from your phone in development (Tailscale)
+
+[Tailscale](https://tailscale.com) gives the development server an HTTPS address with a real certificate that only
+your own devices can reach.
+
+1. Install Tailscale on the computer and on the phone, signed in with the same account, and keep it connected on
+   the phone while testing.
+2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
+
+Then start the database (`docker compose up -d db`) and run `scripts/dev-phone.sh` (option: `PORT`, default 8000).
+It checks Tailscale and the database connection, sets the Django host/CSRF/proxy variables, publishes the server
+with `tailscale serve` and removes that rule on Ctrl+C. It never runs migrations: if some are missing it stops
+and asks you to run `uv run python manage.py migrate`. If `tailscale serve` is refused, allow your user once with
+`sudo tailscale set --operator=$USER`.
+
+The same steps by hand:
+
+3. Expose the development server on the tailnet:
+   ```bash
+   tailscale serve --https=443 8000
+   ```
+   It prints the address, e.g. `https://my-pc.my-tailnet.ts.net`.
+4. Start Django on that port, trusting the Tailscale proxy:
+   ```bash
+   export DJANGO_ALLOWED_HOSTS=.ts.net,localhost
+   export DJANGO_CSRF_TRUSTED_ORIGINS=https://*.ts.net
+   export DJANGO_BEHIND_HTTPS_PROXY=true
+   uv run python manage.py runserver 8000
+   ```
+5. Open the `ts.net` address on the computer, connect OpenRouter and CardTrader in **Profile and settings**, start a
+   session in **Scan cards** and scan the QR code with the phone.
+
+If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.
+
 ## CSV
 
-Columns: `name,set,type,color,condition,language,foil,quantity,price`.
+Columns: `name,set,type,color,condition,language,foil,quantity,price,number` (`number` = collector number, optional: it identifies the exact printing).
