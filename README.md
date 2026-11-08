@@ -33,7 +33,8 @@ docker run -p 8000:8000 -v mtg-data:/data \
 
 Environment variables: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image), `DJANGO_ALLOWED_HOSTS`,
 `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_DB_PATH` (default `/data/db.sqlite3`), `GUNICORN_WORKERS`,
-`CARDTRADER_API_TOKEN`. Migrations run when the container starts.
+`CARDTRADER_API_TOKEN`. Migrations run at container start (`docker-entrypoint.sh`) before any command, e.g.
+`docker run -it -v mtg-data:/data ghcr.io/gab-25/mtg_ledger python manage.py createsuperuser`.
 
 ## CardTrader
 
