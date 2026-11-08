@@ -42,6 +42,7 @@ class FakeCardTrader:
         self.jobs = {}
         self.calls = []
         self.fail_blueprints = set()
+        self.fail_marketplace = False
 
     def handler(self, request):
         path = request.url.path.removeprefix("/api/v2")
@@ -79,6 +80,19 @@ class FakeCardTrader:
             if pid not in self.products:
                 return httpx.Response(404, json={"error_code": "not_found", "extra": {"message": "gone"}})
             return httpx.Response(200, json={"result": "ok", "resource": self.products.pop(pid)})
+        if path == "/marketplace/products" and self.fail_marketplace:
+            return httpx.Response(500, json={"error_code": "boom"})
+        if path == "/marketplace/products" and "expansion_id" in params:
+            def offer(cents, user, cond, lang, foil):
+                return {"price": {"cents": cents, "currency": "EUR"}, "user": {"id": user},
+                        "properties_hash": {"condition": cond, "mtg_language": lang, "mtg_foil": foil}}
+            return httpx.Response(200, json={str(bp["id"]): [
+                offer(100, 77, "Near Mint", "it", False),  # our own offer: ignored
+                offer(300, 2, "Near Mint", "it", False),
+                offer(200, 3, "Slightly Played", "it", False),
+                offer(900, 4, "Near Mint", "en", True),
+                offer(500, 5, "Near Mint", "tlh", False),  # unknown language: skipped
+            ] for bp in self.blueprints.get(int(params["expansion_id"]), [])})
         if path == "/marketplace/products":
             bp = params["blueprint_id"]
             return httpx.Response(200, json={bp: [

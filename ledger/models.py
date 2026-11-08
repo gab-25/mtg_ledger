@@ -308,3 +308,24 @@ class Blueprint(models.Model):
     def __str__(self):
         number = f" #{self.collector_number}" if self.collector_number else ""
         return f"{self.name} ({self.expansion.code.upper()}{number})"
+
+
+class MarketPrice(models.Model):
+    """Cheapest CardTrader offer for a printing in a given language/foil/condition (cache)."""
+
+    blueprint_ct_id = models.PositiveIntegerField()
+    language = models.CharField(max_length=3, choices=Language.choices)
+    foil = models.BooleanField(default=False)
+    condition = models.CharField(max_length=2, choices=Condition.choices)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    fetched_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["blueprint_ct_id", "language", "foil", "condition"], name="unique_market_price"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.blueprint_ct_id} {self.language} {self.condition}{' foil' if self.foil else ''}: {self.price}"
