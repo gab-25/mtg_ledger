@@ -21,14 +21,13 @@
       {% if session.expansion %}<span class="mono" style="color:var(--accent)">{{ session.expansion.code|upper }}</span>{% else %}All expansions{% endif %}
       <span class="sub">· {{ session.default_condition }}</span>
     </span>
-    <button type="button" class="scan-pill scan-auto" data-auto aria-pressed="true">Auto on</button>
     <span class="scan-pill scan-count"><span class="mono" data-count>{{ count }}</span> <span class="sub">cards</span></span>
   </div>
 
   <div class="scan-stage">
     <video class="scan-video" playsinline muted autoplay></video>
     <div class="scan-guide" data-guide></div>
-    <p class="scan-help" data-help>Frame the whole card and hold still — or tap the shutter</p>
+    <p class="scan-help" data-help>Frame the whole card and tap the shutter</p>
   </div>
 
   {% include "ledger/includes/scan_toast.html" %}
@@ -37,7 +36,7 @@
     <a class="btn" href="{% url 'ledger:scan_search' session.uuid %}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search
     </a>
-    <button type="button" class="scan-shutter" data-shutter aria-label="Take photo now" disabled><span></span></button>
+    <button type="button" class="scan-shutter" data-shutter aria-label="Take photo" disabled><span></span></button>
     <a class="btn btn-primary" href="{% url 'ledger:scan_review' session.uuid %}">Review</a>
   </div>
 </main>
