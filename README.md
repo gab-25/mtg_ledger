@@ -112,7 +112,7 @@ Uncertain cards ask you to pick among candidates; **Review** shows the draft (du
 "list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
 are created as *To publish*).
 
-- Connect OpenRouter from **Profile and settings → Connected services** (or export `OPENROUTER_API_KEY`);
+- OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
 - The camera page works on **smartphones only** (webcams can't focus on a card up close). A session started on a
@@ -149,7 +149,7 @@ The same steps by hand:
    export DJANGO_BEHIND_HTTPS_PROXY=true
    uv run python manage.py runserver 8000
    ```
-5. Open the `ts.net` address on the computer, connect OpenRouter and CardTrader in **Profile and settings**, start a
+5. With `OPENROUTER_API_KEY` set, open the `ts.net` address on the computer, connect CardTrader in **Profile and settings**, start a
    session in **Scan cards** and scan the QR code with the phone.
 
 If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.

@@ -1,5 +1,6 @@
 """Camera scanning: start a session, capture cards from the phone, resolve doubts, review and save."""
 
+import logging
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -19,6 +20,8 @@ from .models import Blueprint, Condition, Expansion, Language, ScanLine, ScanSes
 from .openrouter import OpenRouterError
 
 MAX_FRAME_BYTES = 2 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
 PHONE_UA = re.compile(r"Mobi|Android|iPhone|iPod", re.IGNORECASE)
 
 
@@ -137,12 +140,18 @@ def scan_camera(request, uid):
     })
 
 
+def _openrouter_configured():
+    """OpenRouter is a server setting: when it is missing, say so in the server console, not to the user."""
+    if services.openrouter_key():
+        return True
+    logger.warning("OpenRouter is not configured: card recognition needs the OPENROUTER_API_KEY environment variable.")
+    return False
+
+
 def _missing_services():
-    """Connections the scan flow needs but are not configured: [(message, profile link)]."""
+    """Connections the user must set up in the profile before scanning: [(message, profile link)]."""
     profile = reverse("accounts:profile")
     missing = []
-    if not services.openrouter_key():
-        missing.append(("OpenRouter is not connected: card recognition needs its API key.", f"{profile}#openrouter"))
     if not services.api_token():
         missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
                         f"{profile}#cardtrader"))
@@ -170,6 +179,9 @@ def scan_capture(request, uid):
     capture_id = request.POST.get("capture_id", "")[:64]
     if frame is None or frame.size > MAX_FRAME_BYTES:
         return _toast(request, session, state="Missing or oversized photo — try again", error=True, status=400)
+    if not _openrouter_configured():
+        return _toast(request, session, state="Card recognition is not available right now — try again later",
+                      error=True, status=503)
     missing = _missing_services()
     if missing:
         message, link = missing[0]

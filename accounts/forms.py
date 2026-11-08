@@ -22,11 +22,3 @@ class CardTraderTokenForm(forms.Form):
         widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "off"}),
         help_text="Found in your CardTrader profile settings, under API. It is checked with CardTrader before saving.",
     )
-
-
-class OpenRouterKeyForm(forms.Form):
-    key = forms.CharField(
-        label="OpenRouter API key",
-        widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "off"}),
-        help_text="Used to recognise cards from the camera. It is checked with OpenRouter before saving.",
-    )

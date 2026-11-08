@@ -7,7 +7,7 @@ from django.urls import reverse
 
 from ledger import services
 from ledger.cardtrader import CardTraderClient
-from ledger.models import SyncLog
+from ledger.models import SyncLog, SyncService
 
 
 class ProfileTest(TestCase):
@@ -111,34 +111,25 @@ class CardTraderTokenTest(TestCase):
         self.assertContains(resp, f'href="{self.url}#cardtrader"')
 
 
-class OpenRouterKeyTest(TestCase):
+class OpenRouterNotInProfileTest(TestCase):
+    """OpenRouter is configured only through OPENROUTER_API_KEY, never from the profile."""
+
     def setUp(self):
         self.user = get_user_model().objects.create_user("gab", password="pw")
         self.client.force_login(self.user)
         self.url = reverse("accounts:profile")
 
-    @mock.patch.object(services, "check_openrouter_key")
-    def test_openrouter_key_saved(self, check):
-        resp = self.client.post(self.url, {"action": "openrouter", "openrouter-key": "sk-or-secret"})
-        self.assertRedirects(resp, self.url + "#openrouter", fetch_redirect_response=False)
-        check.assert_called_once_with("sk-or-secret")
-        self.assertEqual(services.get_openrouter().api_token, "sk-or-secret")
-        page = self.client.get(self.url)
-        self.assertNotContains(page, "sk-or-secret")
-        self.assertContains(page, "OpenRouter")
+    def test_profile_has_no_openrouter_section(self):
+        resp = self.client.get(self.url)
+        self.assertNotContains(resp, 'id="openrouter"')
+        self.assertNotContains(resp, "openrouter-key")
 
-    @mock.patch.object(services, "check_openrouter_key")
-    def test_openrouter_key_rejected(self, check):
-        from ledger.openrouter import OpenRouterError
+    @override_settings(OPENROUTER_API_KEY="")
+    def test_openrouter_key_cannot_be_saved_from_profile(self):
+        self.client.post(self.url, {"action": "openrouter", "openrouter-key": "sk-or-secret"})
+        self.assertEqual(services.openrouter_key(), "")
+        self.assertFalse(SyncService.objects.filter(name="OpenRouter").exists())
 
-        check.side_effect = OpenRouterError("401")
-        resp = self.client.post(self.url, {"action": "openrouter", "openrouter-key": "bad"})
-        self.assertContains(resp, "OpenRouter rejected this key")
-        self.assertEqual(services.get_openrouter().api_token, "")
-
-    def test_remove_openrouter_key(self):
-        service = services.get_openrouter()
-        service.api_token = "k"
-        service.save()
-        self.client.post(self.url, {"action": "openrouter_remove"})
-        self.assertEqual(services.get_openrouter().api_token, "")
+    @override_settings(OPENROUTER_API_KEY="env-key")
+    def test_openrouter_key_comes_from_environment(self):
+        self.assertEqual(services.openrouter_key(), "env-key")
