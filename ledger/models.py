@@ -329,3 +329,60 @@ class MarketPrice(models.Model):
 
     def __str__(self):
         return f"{self.blueprint_ct_id} {self.language} {self.condition}{' foil' if self.foil else ''}: {self.price}"
+
+
+class ScanSession(models.Model):
+    """A camera scanning session: a draft of cards to add to the collection."""
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        SAVED = "saved", "Saved"
+
+    expansion = models.ForeignKey(Expansion, null=True, blank=True, on_delete=models.SET_NULL)
+    default_condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
+    sale_threshold = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=5, choices=Status.choices, default=Status.OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Scan session {self.pk} ({self.expansion or 'all expansions'})"
+
+
+class ScanLine(models.Model):
+    """One draft row of a scan session: copies of a printing with the same language/foil/condition."""
+
+    session = models.ForeignKey(ScanSession, on_delete=models.CASCADE, related_name="lines")
+    blueprint = models.ForeignKey(Blueprint, null=True, blank=True, on_delete=models.PROTECT)
+    language = models.CharField(max_length=3, choices=Language.choices, blank=True)
+    foil = models.BooleanField(default=False)
+    condition = models.CharField(max_length=2, choices=Condition.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    for_sale = models.BooleanField(null=True, blank=True, help_text="Empty: follow the session threshold")
+    needs_confirmation = models.BooleanField(default=False)
+    candidates = models.JSONField(default=list, blank=True, help_text="Blueprint ct_ids to choose from")
+    frame = models.BinaryField(null=True, blank=True)
+    type_line = models.CharField(max_length=200, blank=True)
+    color = models.CharField(max_length=1, choices=Color.choices, blank=True)
+    capture_id = models.CharField(max_length=64, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self):
+        return f"{self.quantity}× {self.blueprint or 'unconfirmed card'}"
+
+    @property
+    def listed(self):
+        if self.price is None:
+            return False
+        if self.for_sale is not None:
+            return self.for_sale
+        threshold = self.session.sale_threshold
+        return threshold is not None and self.price > threshold
