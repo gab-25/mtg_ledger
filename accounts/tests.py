@@ -64,7 +64,7 @@ class ProfileTest(TestCase):
 
 def fake_client(service=None, token=None):
     def handler(request):
-        if request.headers["Authorization"] == "Bearer good-token":
+        if request.headers["Authorization"].startswith("Bearer good-token"):
             return httpx.Response(200, json={"id": 1, "name": "My shop", "user_id": 7})
         return httpx.Response(401, json={"error_code": "unauthorized", "extra": {"message": "bad token"}})
     return CardTraderClient(token or services.api_token(service), transport=httpx.MockTransport(handler))
@@ -88,6 +88,12 @@ class CardTraderTokenTest(TestCase):
         self.assertContains(page, "Replace token")
         self.assertNotContains(page, "good-token")  # never rendered back
         self.assertTrue(SyncLog.objects.filter(message__contains="API token connected").exists())
+
+    def test_long_jwt_token_is_saved(self, _):
+        token = "good-token." + "x" * 1200  # CardTrader tokens are JWTs, longer than 500 characters
+        resp = self.connect(token)
+        self.assertRedirects(resp, self.url + "#cardtrader", fetch_redirect_response=False)
+        self.assertEqual(services.get_cardtrader().api_token, token)
 
     def test_rejected_token_is_not_saved(self, _):
         resp = self.connect("bad-token")
