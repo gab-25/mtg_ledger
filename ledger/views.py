@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from . import services
+from . import cardmarket, services
 from .cardtrader import CardTraderError
 from .forms import CardItemForm, CsvImportForm, ListingForm, ShipForm
 from .models import Card, CollectionItem, Color, Condition, Listing, Order, SyncConflict, SyncLog, SyncService
@@ -184,7 +184,7 @@ def sale(request):
 
 @login_required
 def listing_edit(request, item_pk):
-    item = get_object_or_404(CollectionItem.objects.select_related("card"), pk=item_pk)
+    item = get_object_or_404(CollectionItem.objects.select_related("card__cm_product"), pk=item_pk)
     listing = getattr(item, "listing", None) or Listing(item=item, price=item.price, quantity=1)
     old_status = listing.status
     form = ListingForm(request.POST or None, instance=listing)
@@ -203,7 +203,10 @@ def listing_edit(request, item_pk):
         listing.save()
         messages.success(request, f"Listing for {item.card.name} saved.")
         return redirect("ledger:sale")
-    return render(request, "ledger/listing_form.html", {"nav": "sale", "form": form, "item": item, "listing": listing})
+    return render(request, "ledger/listing_form.html", {
+        "nav": "sale", "form": form, "item": item, "listing": listing,
+        "cm_suggestion": cardmarket.suggested_price(item.card, item.foil),
+    })
 
 
 @login_required

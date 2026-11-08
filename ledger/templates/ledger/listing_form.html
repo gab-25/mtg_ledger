@@ -17,6 +17,14 @@
     {% include "theme/includes/field.html" with field=form.market_price %}
     {% include "theme/includes/field.html" with field=form.status %}
   </div>
+  <p class="hint" style="margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span><span class="price-label">Cardmarket trend{% if item.foil %} (foil){% endif %}</span>
+    {% if cm_suggestion is not None %}€{{ cm_suggestion|floatformat:"2g" }}{% else %}—{% endif %}</span>
+    {% if cm_suggestion is not None %}
+    <button type="button" class="btn btn-ghost btn-sm" data-suggested-price="{{ cm_suggestion|stringformat:'s' }}"
+            onclick="document.getElementById('{{ form.price.id_for_label }}').value = this.dataset.suggestedPrice">Use</button>
+    {% endif %}
+  </p>
   <p class="hint" style="margin:0">Changes to a published listing are queued as “To publish” until you publish them to CardTrader.</p>
 </form>
 <div class="panel" style="padding:0;border:0;background:none">
