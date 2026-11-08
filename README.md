@@ -74,6 +74,21 @@ Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/a
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
 
+## Scanning cards with the camera
+
+**Collection → Scan cards** opens a phone-friendly flow: pick an expansion (or *All expansions*) and a default
+condition, then point the camera at one card at a time. A card is captured automatically when it is still and in
+focus, recognised by a vision model on OpenRouter, matched against the local CardTrader catalog and added to a draft.
+Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged), lets you set a
+"list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
+are created as *To publish*).
+
+- Connect OpenRouter from **Profile and settings → Connected services** (or export `OPENROUTER_API_KEY`);
+  `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
+- The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
+- The browser only gives camera access over **HTTPS**: in development expose `runserver` through an HTTPS tunnel
+  (and add its host to `ALLOWED_HOSTS` / `CSRF_TRUSTED_ORIGINS`).
+
 ## CSV
 
-Columns: `name,set,type,color,condition,language,foil,quantity,price`.
+Columns: `name,set,type,color,condition,language,foil,quantity,price,number` (`number` = collector number, optional: it identifies the exact printing).
