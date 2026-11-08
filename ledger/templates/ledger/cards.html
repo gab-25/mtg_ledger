@@ -31,7 +31,7 @@
 </form>
 
 {% if page is None %}
-<p class="hint">Search the card database — every Magic single on Cardmarket, with its price guide (updated nightly) — by name, set code or collector number, or list the cards you own.</p>
+<p class="hint">Search the card database — every Magic printing on CardTrader, with its Cardmarket prices (updated nightly) — by name, set code or collector number, or list the cards you own.</p>
 {% else %}
 <div class="table-wrap">
   <table>
@@ -49,23 +49,24 @@
       </tr>
     </thead>
     <tbody>
-      {% for p in page %}
+      {% for p in page %}{% with c=p.cm_price %}
       <tr>
         <td>
           <div class="card-cell">
             {% if p.image_url %}<img src="{{ p.image_url }}" alt="" loading="lazy" width="36" height="50" style="border-radius:3px;object-fit:cover">{% endif %}
-            <div>{{ p.name }}</div>
+            <div>{{ p.name }}{% if p.version %}<div class="sub">{{ p.version }}</div>{% endif %}</div>
           </div>
         </td>
-        <td class="mono dim">{% if p.set_code %}{{ p.set_code|upper }}{% if p.collector_number %} #{{ p.collector_number }}{% endif %}{% else %}—{% endif %}</td>
+        <td class="mono dim" title="{{ p.expansion.name }}">{{ p.expansion.code|upper }}{% if p.collector_number %} #{{ p.collector_number }}{% endif %}</td>
         <td class="num">{{ p.owned_qty|default_if_none:"—" }}</td>
-        <td class="num">{% if p.trend is not None %}€{{ p.trend|floatformat:"2g" }}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.low is not None %}€{{ p.low|floatformat:"2g" }}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.avg is not None %}€{{ p.avg|floatformat:"2g" }}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.trend_foil is not None %}€{{ p.trend_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.low_foil is not None %}€{{ p.low_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.avg_foil is not None %}€{{ p.avg_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.trend is not None %}€{{ c.trend|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.low is not None %}€{{ c.low|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.avg is not None %}€{{ c.avg|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.trend_foil is not None %}€{{ c.trend_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.low_foil is not None %}€{{ c.low_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
+        <td class="num">{% if c and c.avg_foil is not None %}€{{ c.avg_foil|floatformat:"2g" }}{% else %}—{% endif %}</td>
       </tr>
+      {% endwith %}
       {% empty %}
       <tr><td colspan="9" class="empty">No cards match these criteria.</td></tr>
       {% endfor %}
@@ -73,7 +74,7 @@
   </table>
 </div>
 <div class="table-foot">
-  <span>Showing {{ page.object_list|length }} of {{ page.paginator.count|intcomma }} printings{% with first=page.object_list.0 %}{% if first.prices_date %} · price guide of {{ first.prices_date|date:"j M Y" }}{% endif %}{% endwith %}</span>
+  <span>Showing {{ page.object_list|length }} of {{ page.paginator.count|intcomma }} printings{% if prices_date %} · Cardmarket price guide of {{ prices_date|date:"j M Y" }}{% endif %}</span>
   {% if page.has_other_pages %}
   <nav class="pager" aria-label="Pagination">
     {% if page.has_previous %}<a class="btn btn-sm" href="?{{ query }}&amp;page={{ page.previous_page_number }}">Previous</a>{% endif %}

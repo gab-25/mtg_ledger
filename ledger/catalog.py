@@ -68,6 +68,7 @@ def _blueprint_fields(bp):
         "version": bp.get("version") or "",
         "rarity": fixed.get("mtg_rarity") or "",
         "image_url": (image or "")[:500],
+        "cm_price_id": next(iter(bp.get("card_market_ids") or []), None),
     }
 
 

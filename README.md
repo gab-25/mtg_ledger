@@ -77,12 +77,13 @@ Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/a
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
 
-## Cardmarket prices
+## Card database and Cardmarket prices
 
-The Ledger keeps a local copy of every Cardmarket MTG single with its price guide (low, trend, average and the
-1/7/30-day averages, regular and foil), from Cardmarket's public daily files. Scryfall's `default_cards` bulk data
-ties each Cardmarket product to its set + collector number, which is how your cards are linked to it (cards whose
-set code differs from Scryfall's, or without a collector number, stay unlinked; the sync logs how many).
+Every night the Ledger reloads its card database from CardTrader (every MTG expansion and every printing, i.e.
+blueprint) and Cardmarket's public price guide (low, trend, average and the 1/7/30-day averages, regular and foil).
+Each CardTrader blueprint carries its Cardmarket product id, which ties it to its price. Your cards are matched to a
+printing by their CardTrader blueprint, or else by set code + collector number; the sync logs how many cards have no
+printing. It needs the CardTrader API token (environment or Profile and settings) on the worker too.
 
 - **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
   how many copies you own and the Cardmarket prices.

@@ -49,10 +49,6 @@ class Card(models.Model):
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
     )
-    cm_product = models.ForeignKey(
-        "CardmarketProduct", null=True, blank=True, on_delete=models.SET_NULL, related_name="cards",
-        verbose_name="Cardmarket product", help_text="Linked by the nightly Cardmarket sync (set + collector number)",
-    )
 
     class Meta:
         ordering = ["name", "set_code"]
@@ -306,6 +302,11 @@ class Blueprint(models.Model):
     version = models.CharField(max_length=80, blank=True)
     rarity = models.CharField(max_length=40, blank=True)
     image_url = models.URLField(max_length=500, blank=True)
+    cm_price = models.ForeignKey(
+        "CardmarketPrice", null=True, blank=True, on_delete=models.DO_NOTHING, db_constraint=False,
+        related_name="blueprints", verbose_name="Cardmarket product",
+        help_text="First of the blueprint's Cardmarket ids; its price row may not exist",
+    )
 
     class Meta:
         ordering = ["expansion__name", "name"]
@@ -336,15 +337,10 @@ class MarketPrice(models.Model):
         return f"{self.blueprint_ct_id} {self.language} {self.condition}{' foil' if self.foil else ''}: {self.price}"
 
 
-class CardmarketProduct(models.Model):
-    """A Cardmarket MTG single with its latest price guide (local copy of Cardmarket's public daily files)."""
+class CardmarketPrice(models.Model):
+    """Cardmarket price guide of one Cardmarket product (local copy of Cardmarket's public daily file)."""
 
     id_product = models.PositiveIntegerField("Cardmarket product", primary_key=True)
-    name = models.CharField(max_length=200, db_index=True)
-    id_expansion = models.PositiveIntegerField(null=True, blank=True)
-    set_code = models.CharField(max_length=10, blank=True, help_text="Scryfall set code, lower case")
-    collector_number = models.CharField(max_length=12, blank=True, help_text="Normalised collector number")
-    image_url = models.URLField(max_length=500, blank=True)
     low = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     trend = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     avg = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -358,16 +354,9 @@ class CardmarketProduct(models.Model):
     avg7_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     avg30_foil = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     prices_date = models.DateTimeField(null=True, blank=True, help_text="createdAt of the price guide")
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["name", "set_code"]
 
     def __str__(self):
-        if not self.set_code:
-            return self.name
-        number = f" #{self.collector_number}" if self.collector_number else ""
-        return f"{self.name} ({self.set_code.upper()}{number})"
+        return f"Cardmarket {self.id_product}: {self.trend}"
 
 
 class ScanSession(models.Model):

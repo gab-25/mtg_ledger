@@ -1,35 +1,34 @@
-"""Cardmarket catalog and price guide (public daily files) plus the Scryfall bridge.
+"""Nightly card database and Cardmarket prices.
 
-Cardmarket publishes its MTG singles and their price guide every night, but the product list has no set code or
-collector number. Scryfall's bulk data gives both for each `cardmarket_id`, which is how products are tied to the
-Ledger's cards (set + collector number).
+CardTrader is the master card database: every MTG expansion and every blueprint (printing) is reloaded from its
+API. Each blueprint carries its Cardmarket product ids, which tie it to Cardmarket's public daily price guide.
 """
 
-import gzip
-import json
 import logging
-import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
 import httpx
 
-from .catalog import normalize_number
-from .models import Card, CardmarketProduct, SyncLog
+from . import services
+from .cardtrader import MTG_GAME_ID, CardTraderError
+from .catalog import _blueprint_fields, normalize_number
+from .models import Blueprint, Card, CardmarketPrice, Expansion, SyncLog
 
-PRODUCTS_URL = "https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_1.json"
 PRICE_GUIDE_URL = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json"
-SCRYFALL_BULK_URL = "https://api.scryfall.com/bulk-data"
 USER_AGENT = "mtg-ledger/0.1"
 
-# Price guide key -> CardmarketProduct field
+# Price guide key -> CardmarketPrice field
 PRICE_FIELDS = {
     "low": "low", "trend": "trend", "avg": "avg", "avg1": "avg1", "avg7": "avg7", "avg30": "avg30",
     "low-foil": "low_foil", "trend-foil": "trend_foil", "avg-foil": "avg_foil",
     "avg1-foil": "avg1_foil", "avg7-foil": "avg7_foil", "avg30-foil": "avg30_foil",
 }
 BATCH = 2000
+BLUEPRINT_PAUSE = 0.06  # CardTrader allows 200 requests per 10 s across all endpoints
+RATE_LIMIT_WAIT = 10
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +39,13 @@ class CardmarketError(Exception):
 
 @dataclass
 class SyncResult:
-    products: int
+    expansions: int
+    blueprints: int
     priced: int
     linked: int
     unlinked: int
     guide_date: datetime
+    failed: list = field(default_factory=list)
 
 
 def make_client(transport=None):
@@ -54,125 +55,184 @@ def make_client(transport=None):
     )
 
 
+# --- lookups ---------------------------------------------------------------
+
+def blueprint_for(card):
+    """The CardTrader printing of a Ledger card: its matched blueprint, else set code + collector number."""
+    if card.ct_blueprint_id:
+        bp = Blueprint.objects.filter(ct_id=card.ct_blueprint_id).first()
+        if bp is not None:
+            return bp
+    number = normalize_number(card.collector_number)
+    if not number:
+        return None
+    return Blueprint.objects.filter(expansion__code=card.set_code.lower(), collector_number=number).first()
+
+
 def suggested_price(card, foil):
     """Cardmarket trend to suggest when listing a copy of card (foil trend for foil copies), or None."""
-    product = card.cm_product
-    if product is None:
+    bp = blueprint_for(card)
+    if bp is None or bp.cm_price_id is None:
         return None
-    return product.trend_foil if foil else product.trend
+    price = CardmarketPrice.objects.filter(pk=bp.cm_price_id).first()
+    if price is None:
+        return None
+    return price.trend_foil if foil else price.trend
 
 
-def _get_json(client, url):
-    response = client.get(url)
-    response.raise_for_status()
-    return response.json()
+def owned_quantities():
+    """{blueprint ct_id: copies in the collection}, matching cards like blueprint_for()."""
+    from django.db.models import Sum
+
+    per_card = list(
+        Card.objects.annotate(qty=Sum("items__quantity")).filter(qty__gt=0)
+        .values_list("ct_blueprint_id", "set_code", "collector_number", "qty")
+    )
+    known = set(Blueprint.objects.filter(ct_id__in=[c[0] for c in per_card if c[0]]).values_list("ct_id", flat=True))
+    wanted = {(s.lower(), normalize_number(n)) for bp, s, n, _ in per_card if bp not in known and normalize_number(n)}
+    by_printing = {}
+    if wanted:
+        rows = Blueprint.objects.filter(
+            expansion__code__in={s for s, _ in wanted}, collector_number__in={n for _, n in wanted}
+        ).order_by("-ct_id").values_list("expansion__code", "collector_number", "ct_id")
+        by_printing = {(s, n): ct_id for s, n, ct_id in rows}
+    owned = {}
+    for bp, s, n, qty in per_card:
+        ct_id = bp if bp in known else by_printing.get((s.lower(), normalize_number(n)))
+        if ct_id is not None:
+            owned[ct_id] = owned.get(ct_id, 0) + qty
+    return owned
 
 
-def _image(card):
-    uris = card.get("image_uris") or ((card.get("card_faces") or [{}])[0].get("image_uris")) or {}
-    return uris.get("normal", "")
-
-
-def _scryfall_printings(client):
-    """{cardmarket_id: (set code, collector number, image url)} from Scryfall default_cards (gzipped JSON lines),
-    downloaded to a temporary file and read one card at a time."""
-    bulk = _get_json(client, SCRYFALL_BULK_URL)
-    uri = next(d["jsonl_download_uri"] for d in bulk["data"] if d["type"] == "default_cards")
-    printings = {}
-    with tempfile.TemporaryFile() as f:
-        with client.stream("GET", uri) as response:
-            response.raise_for_status()
-            for chunk in response.iter_bytes():
-                f.write(chunk)
-        f.seek(0)
-        compressed = f.read(2) == b"\x1f\x8b"  # already inflated when served with Content-Encoding: gzip
-        f.seek(0)
-        lines = gzip.open(f, "rt", encoding="utf-8") if compressed else (line.decode("utf-8") for line in f)
-        for line in lines:
-            if not line.strip():
-                continue
-            card = json.loads(line)
-            cm_id = card.get("cardmarket_id")
-            if cm_id is None or cm_id in printings:
-                continue
-            printings[cm_id] = (
-                (card.get("set") or "").lower(), normalize_number(card.get("collector_number")), _image(card)
-            )
-    return printings
-
+# --- download ----------------------------------------------------------------
 
 def _money(value):
     return None if value is None else Decimal(str(value))
 
 
-def _fetch(client):
-    """Download and parse every source; raises CardmarketError before anything is written."""
+def _fetch_guide(client):
+    """({idProduct: CardmarketPrice}, createdAt) from today's price guide."""
     try:
-        # One row per product: a repeated idProduct would make the upsert touch the same row twice.
-        products = list({p["idProduct"]: p for p in reversed(_get_json(client, PRODUCTS_URL)["products"])}.values())
-        guide = _get_json(client, PRICE_GUIDE_URL)
+        response = client.get(PRICE_GUIDE_URL)
+        response.raise_for_status()
+        guide = response.json()
         guide_date = datetime.strptime(guide["createdAt"], "%Y-%m-%dT%H:%M:%S%z")
-        prices = {row["idProduct"]: row for row in guide["priceGuides"]}
-        printings = _scryfall_printings(client)
-        objs = []
-        for p in products:
-            set_code, number, image = printings.get(p["idProduct"], ("", "", ""))
-            row = prices.get(p["idProduct"], {})
-            objs.append(CardmarketProduct(
-                id_product=p["idProduct"], name=p["name"][:200], id_expansion=p.get("idExpansion"),
-                set_code=set_code[:10], collector_number=number[:12], image_url=image[:500],
-                prices_date=guide_date,
-                **{field: _money(row.get(key)) for key, field in PRICE_FIELDS.items()},
-            ))
-    except (httpx.HTTPError, OSError, EOFError, ValueError, KeyError, TypeError, StopIteration) as exc:
-        raise CardmarketError(f"{type(exc).__name__}: {exc}") from exc
-    priced = sum(1 for p in products if p["idProduct"] in prices)
-    return objs, priced, guide_date
+        prices = {
+            row["idProduct"]: CardmarketPrice(
+                id_product=row["idProduct"], prices_date=guide_date,
+                **{f: _money(row.get(key)) for key, f in PRICE_FIELDS.items()},
+            )
+            for row in guide["priceGuides"]
+        }
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise CardmarketError(f"price guide: {type(exc).__name__}: {exc}") from exc
+    return prices, guide_date
 
 
-def _relink_cards():
-    """Point every Card at the product with its set + collector number. Returns (linked, unlinked)."""
-    by_printing = dict(
-        ((s, n), pk) for pk, s, n in
-        CardmarketProduct.objects.exclude(set_code="").values_list("pk", "set_code", "collector_number")
-    )
-    changed, linked, unlinked = [], 0, 0
-    for card in Card.objects.only("pk", "set_code", "collector_number", "cm_product"):
+def _export(client, expansion_id):
+    try:
+        return client.blueprints(expansion_id) or []
+    except CardTraderError as exc:
+        if exc.status != 429:
+            raise
+        time.sleep(RATE_LIMIT_WAIT)
+        return client.blueprints(expansion_id) or []
+
+
+def _fetch_catalog(client):
+    """(MTG expansions, {expansion ct_id: [blueprint]}, codes of expansions that could not be loaded)."""
+    try:
+        expansions = [e for e in client.expansions() if e.get("game_id") == MTG_GAME_ID and e.get("code")]
+    except CardTraderError as exc:
+        raise CardmarketError(f"CardTrader expansions: {exc}") from exc
+    blueprints, failed = {}, []
+    for e in expansions:
+        try:
+            blueprints[e["id"]] = _export(client, e["id"])
+        except CardTraderError as exc:
+            logger.warning("Blueprints of %s not loaded: %s", e["code"], exc)
+            failed.append(e["code"].lower())
+        time.sleep(BLUEPRINT_PAUSE)
+    return expansions, blueprints, sorted(failed)
+
+
+# --- write -------------------------------------------------------------------
+
+def _count_links():
+    """(linked, unlinked) Ledger cards against the local catalog."""
+    ids = set(Blueprint.objects.values_list("ct_id", flat=True))
+    printings = set(Blueprint.objects.values_list("expansion__code", "collector_number"))
+    linked = unlinked = 0
+    for card in Card.objects.only("set_code", "collector_number", "ct_blueprint_id"):
         number = normalize_number(card.collector_number)
-        target = by_printing.get((card.set_code.lower(), number)) if number else None
-        if target is None:
-            unlinked += 1
-        else:
+        if card.ct_blueprint_id in ids or (number and (card.set_code.lower(), number) in printings):
             linked += 1
-        if card.cm_product_id != target:
-            card.cm_product_id = target
-            changed.append(card)
-    Card.objects.bulk_update(changed, ["cm_product"], batch_size=BATCH)
+        else:
+            unlinked += 1
     return linked, unlinked
 
 
-def sync(client):
-    """Refresh products and prices from today's files and relink the Ledger's cards (all or nothing)."""
+def sync(cm_client, ct_client):
+    """Reload the card database from CardTrader and the prices from Cardmarket.
+
+    Everything is downloaded before anything is written; an expansion whose blueprints fail keeps what it had.
+    """
     from django.db import transaction
+    from django.utils import timezone
 
-    objs, priced, guide_date = _fetch(client)
-    update_fields = [f.name for f in CardmarketProduct._meta.concrete_fields if not f.primary_key]
-    with transaction.atomic():
-        CardmarketProduct.objects.bulk_create(
-            objs, batch_size=BATCH, update_conflicts=True, unique_fields=["id_product"],
-            update_fields=update_fields,
-        )
-        linked, unlinked = _relink_cards()
-    return SyncResult(products=len(objs), priced=priced, linked=linked, unlinked=unlinked, guide_date=guide_date)
-
-
-def run_sync(client=None):
-    """sync() with its outcome written to the SyncLog. Returns the result, or None when a source failed."""
-    own = client is None
-    client = client or make_client()
+    prices, guide_date = _fetch_guide(cm_client)
+    expansions, exports, failed = _fetch_catalog(ct_client)
+    now = timezone.now()
     try:
-        result = sync(client)
-    except CardmarketError as exc:
+        expansion_objs = [Expansion(ct_id=e["id"], code=e["code"].lower(), name=e["name"]) for e in expansions]
+        with transaction.atomic():
+            Expansion.objects.bulk_create(
+                expansion_objs, update_conflicts=True, unique_fields=["ct_id"], update_fields=["code", "name"],
+            )
+            pk_by_ct = dict(Expansion.objects.values_list("ct_id", "pk"))
+            objs = {}
+            for exp_ct_id, bps in exports.items():
+                for bp in bps:
+                    objs[bp["id"]] = Blueprint(ct_id=bp["id"], expansion_id=pk_by_ct[exp_ct_id], **_blueprint_fields(bp))
+            Blueprint.objects.bulk_create(
+                objs.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["ct_id"],
+                update_fields=["expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price"],
+            )
+            Expansion.objects.filter(ct_id__in=exports.keys()).update(blueprints_synced_at=now)
+            CardmarketPrice.objects.bulk_create(
+                prices.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["id_product"],
+                update_fields=[*PRICE_FIELDS.values(), "prices_date"],
+            )
+    except (KeyError, TypeError) as exc:  # unexpected blueprint shape, raised before the transaction commits
+        raise CardmarketError(f"CardTrader blueprints: {type(exc).__name__}: {exc}") from exc
+    linked, unlinked = _count_links()
+    priced = sum(1 for o in objs.values() if o.cm_price_id in prices)
+    return SyncResult(
+        expansions=len(expansions), blueprints=len(objs), priced=priced, linked=linked, unlinked=unlinked,
+        guide_date=guide_date, failed=failed,
+    )
+
+
+def _summary(result):
+    message = (
+        f"Cardmarket: {result.expansions} expansions, {result.blueprints} printings, {result.priced} priced "
+        f"(guide {result.guide_date:%Y-%m-%d}), {result.linked} cards linked, {result.unlinked} not linked"
+    )
+    if result.failed:
+        shown = ", ".join(result.failed[:10]) + (", …" if len(result.failed) > 10 else "")
+        message += f"; {len(result.failed)} expansions not loaded ({shown})"
+    return message
+
+
+def run_sync(cm_client=None):
+    """sync() with its outcome written to the SyncLog. Returns the result, or None when it could not run."""
+    own_cm = cm_client is None
+    cm_client = cm_client or make_client()
+    ct_client = None
+    try:
+        ct_client = services.make_client()
+        result = sync(cm_client, ct_client)
+    except (CardmarketError, CardTraderError) as exc:
         SyncLog.objects.create(message=f"Cardmarket sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)
         return None
     except Exception as exc:
@@ -183,11 +243,10 @@ def run_sync(client=None):
         )
         raise
     finally:
-        if own:
-            client.close()
-    SyncLog.objects.create(message=(
-        f"Cardmarket: {result.products} products, {result.priced} priced (guide {result.guide_date:%Y-%m-%d}), "
-        f"{result.linked} cards linked, {result.unlinked} not linked"
-    ))
+        if ct_client is not None:
+            ct_client.close()
+        if own_cm:
+            cm_client.close()
+    level = SyncLog.Level.WARNING if result.failed else SyncLog.Level.OK
+    SyncLog.objects.create(message=_summary(result)[:300], level=level)
     return result
-

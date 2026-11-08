@@ -1,6 +1,4 @@
 import copy
-import gzip
-import json
 from decimal import Decimal
 from io import StringIO
 from unittest import mock
@@ -9,221 +7,200 @@ import httpx
 from django.core.management import call_command
 from django.test import TestCase
 
-from . import cardmarket
-from .models import Card, CardmarketProduct, SyncLog
-
-SCRYFALL_DOWNLOAD = "https://data.scryfall.io/default-cards/default-cards-20261108100757.jsonl.gz"
-
-PRODUCTS = {
-    "version": 1, "createdAt": "2026-11-08T13:01:01+0100",
-    "products": [
-        {"idProduct": 466234, "name": "Ugin, the Spirit Dragon", "idCategory": 1, "categoryName": "Magic Single",
-         "idExpansion": 2864, "idMetacard": 1, "dateAdded": "2020-06-01 00:00:00"},
-        {"idProduct": 900, "name": "Counterspell", "idCategory": 1, "categoryName": "Magic Single",
-         "idExpansion": 5000, "idMetacard": 2, "dateAdded": "2022-01-01 00:00:00"},
-        {"idProduct": 1, "name": "Altar's Light", "idCategory": 1, "categoryName": "Magic Single",
-         "idExpansion": 45, "idMetacard": 129, "dateAdded": "2007-01-01 00:00:00"},
-    ],
-}
+from . import cardmarket, services
+from .models import Blueprint, Card, CardmarketPrice, Expansion, SyncLog
+from .tests import FakeCardTrader
 
 GUIDE = {
     "version": 1, "createdAt": "2026-11-07T02:45:31+0100",
     "priceGuides": [
-        {"idProduct": 466234, "idCategory": 1, "avg": 12.5, "low": 10.0, "trend": 12.75, "avg1": 12.0,
-         "avg7": 12.6, "avg30": 13.0, "avg-foil": 14.0, "low-foil": None, "trend-foil": 14.34,
-         "avg1-foil": 14.1, "avg7-foil": 14.2, "avg30-foil": 14.3},
-        {"idProduct": 1, "idCategory": 1, "trend": 0.06},
-        {"idProduct": 777777, "idCategory": 1, "trend": 99},
+        {"idProduct": 555001, "idCategory": 1, "avg": 40.5, "low": 35.0, "trend": 42.0, "avg1": 41.0,
+         "avg7": 41.5, "avg30": 43.0, "avg-foil": 60.0, "low-foil": None, "trend-foil": 61.25,
+         "avg1-foil": 59.0, "avg7-foil": 60.5, "avg30-foil": 62.0},
+        {"idProduct": 555201, "idCategory": 1, "trend": 1.2},
+        {"idProduct": 999999, "idCategory": 1, "trend": 99},
     ],
 }
 
-SCRYFALL_CARDS = [
-    {"name": "Ugin, the Spirit Dragon", "cardmarket_id": 466234, "set": "m21", "collector_number": "1",
-     "image_uris": {"normal": "https://img/ugin.jpg"}},
-    {"name": "Counterspell", "cardmarket_id": 900, "set": "dmr", "collector_number": "45",
-     "card_faces": [{"image_uris": {"normal": "https://img/cs.jpg"}}]},
-    {"name": "No Cardmarket", "set": "xyz", "collector_number": "7"},
-]
+# CardTrader blueprint id -> Cardmarket ids (FakeCardTrader's catalog has none of its own)
+CM_IDS = {1001: [555001], 1201: [555201, 555202], 1002: []}
 
 
-class FakeSources:
-    """The Cardmarket files and Scryfall bulk data, served through httpx.MockTransport."""
+class FakeGuide:
+    """Cardmarket's price guide file, served through httpx.MockTransport."""
 
     def __init__(self):
-        self.products = copy.deepcopy(PRODUCTS)
         self.guide = copy.deepcopy(GUIDE)
-        self.scryfall_cards = copy.deepcopy(SCRYFALL_CARDS)
-        self.fail = set()  # source keys answering 500
-        self.content_encoding = False  # serve Scryfall with Content-Encoding: gzip (httpx inflates it)
-        self.raw = {}  # source key -> raw body served instead of JSON
-
-    def _serve(self, key, payload):
-        if key in self.fail:
-            return httpx.Response(500, text="boom")
-        if key in self.raw:
-            return httpx.Response(200, content=self.raw[key])
-        return httpx.Response(200, json=payload)
+        self.fail = False
+        self.raw = None
 
     def handler(self, request):
-        url = str(request.url)
-        if url == cardmarket.PRODUCTS_URL:
-            return self._serve("products", self.products)
-        if url == cardmarket.PRICE_GUIDE_URL:
-            return self._serve("guide", self.guide)
-        if url == cardmarket.SCRYFALL_BULK_URL:
-            return httpx.Response(200, json={"data": [
-                {"type": "oracle_cards", "jsonl_download_uri": "https://data.scryfall.io/oracle.jsonl.gz"},
-                {"type": "default_cards", "jsonl_download_uri": SCRYFALL_DOWNLOAD, "compressed_size": 1},
-            ]})
-        if url == SCRYFALL_DOWNLOAD:
-            if "scryfall" in self.fail:
-                return httpx.Response(500, text="boom")
-            body = self.raw.get("scryfall") or "\n".join(json.dumps(c) for c in self.scryfall_cards).encode()
-            if self.content_encoding:
-                return httpx.Response(200, content=gzip.compress(body), headers={"Content-Encoding": "gzip"})
-            return httpx.Response(200, content=gzip.compress(body), headers={"Content-Type": "application/gzip"})
-        return httpx.Response(404)
+        if str(request.url) != cardmarket.PRICE_GUIDE_URL:
+            return httpx.Response(404)
+        if self.fail:
+            return httpx.Response(500, text="boom")
+        if self.raw is not None:
+            return httpx.Response(200, content=self.raw)
+        return httpx.Response(200, json=self.guide)
 
     def client(self):
         return cardmarket.make_client(transport=httpx.MockTransport(self.handler))
 
 
-class SuggestedPriceTest(TestCase):
+class CardmarketTestCase(TestCase):
     def setUp(self):
-        self.product = CardmarketProduct.objects.create(
-            id_product=466234, name="Ugin, the Spirit Dragon", set_code="m21", collector_number="1",
-            trend=Decimal("12.75"), trend_foil=Decimal("14.34"),
-        )
-        self.card = Card.objects.create(
-            name="Ugin, the Spirit Dragon", set_code="M21", collector_number="1", cm_product=self.product
-        )
+        self.ct = FakeCardTrader()
+        for expansion in self.ct.blueprints.values():
+            for bp in expansion:
+                bp["card_market_ids"] = CM_IDS.get(bp["id"], [])
+                bp["image_url"] = f"https://img/{bp['id']}.jpg"
+        self.guide = FakeGuide()
+        self.cm = self.guide.client()
+        self.addCleanup(self.cm.close)
+        for target, attr, value in (
+            (services, "make_client", mock.Mock(side_effect=self.ct.client)),
+            (cardmarket, "BLUEPRINT_PAUSE", 0),
+        ):
+            patcher = mock.patch.object(target, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
-    def test_suggested_price_non_foil_uses_trend(self):
-        self.assertEqual(cardmarket.suggested_price(self.card, foil=False), Decimal("12.75"))
+    def sync(self):
+        with self.ct.client() as ct:
+            return cardmarket.sync(self.cm, ct)
 
-    def test_suggested_price_foil_uses_trend_foil(self):
-        self.assertEqual(cardmarket.suggested_price(self.card, foil=True), Decimal("14.34"))
 
-    def test_suggested_price_foil_without_foil_trend(self):
-        self.product.trend_foil = None
-        self.product.save()
-        self.assertIsNone(cardmarket.suggested_price(self.card, foil=True))
+class SuggestedPriceTest(CardmarketTestCase):
+    def setUp(self):
+        super().setUp()
+        self.sync()
 
-    def test_suggested_price_unlinked_card(self):
+    def test_non_foil_uses_trend_via_blueprint_link(self):
+        card = Card.objects.create(name="Ragavan", set_code="MH2", collector_number="138", ct_blueprint_id=1001)
+        self.assertEqual(cardmarket.suggested_price(card, foil=False), Decimal("42.00"))
+
+    def test_foil_uses_trend_foil(self):
+        card = Card.objects.create(name="Ragavan", set_code="MH2", collector_number="138", ct_blueprint_id=1001)
+        self.assertEqual(cardmarket.suggested_price(card, foil=True), Decimal("61.25"))
+
+    def test_foil_without_foil_trend(self):
+        CardmarketPrice.objects.filter(pk=555201).update(trend_foil=None)
+        card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=1201)
+        self.assertIsNone(cardmarket.suggested_price(card, foil=True))
+
+    def test_card_without_blueprint_found_by_set_and_number(self):
+        card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="045")
+        self.assertEqual(cardmarket.suggested_price(card, foil=False), Decimal("1.20"))
+
+    def test_unknown_printing(self):
         card = Card.objects.create(name="X", set_code="PLST", collector_number="9")
         self.assertIsNone(cardmarket.suggested_price(card, foil=False))
 
+    def test_blueprint_without_cardmarket_id(self):
+        card = Card.objects.create(name="Solitude", set_code="MH2", collector_number="32", ct_blueprint_id=1002)
+        self.assertIsNone(cardmarket.suggested_price(card, foil=False))
 
-class SyncTest(TestCase):
-    def setUp(self):
-        self.sources = FakeSources()
-        self.client_ = self.sources.client()
-        self.addCleanup(self.client_.close)
 
-    def test_sync_creates_products_with_prices_and_printing(self):
-        result = cardmarket.sync(self.client_)
-        ugin = CardmarketProduct.objects.get(pk=466234)
-        self.assertEqual((ugin.name, ugin.id_expansion), ("Ugin, the Spirit Dragon", 2864))
-        self.assertEqual((ugin.set_code, ugin.collector_number, ugin.image_url), ("m21", "1", "https://img/ugin.jpg"))
-        self.assertEqual((ugin.trend, ugin.trend_foil, ugin.low_foil), (Decimal("12.75"), Decimal("14.34"), None))
-        self.assertEqual((ugin.low, ugin.avg, ugin.avg30_foil), (Decimal("10.00"), Decimal("12.50"), Decimal("14.30")))
-        self.assertEqual(ugin.prices_date.isoformat(), "2026-11-07T01:45:31+00:00")
-        self.assertEqual(CardmarketProduct.objects.get(pk=900).image_url, "https://img/cs.jpg")
-        self.assertEqual((result.products, result.priced), (3, 2))
+class SyncTest(CardmarketTestCase):
+    def test_sync_loads_every_mtg_expansion_and_blueprint(self):
+        result = self.sync()
+        self.assertEqual(set(Expansion.objects.values_list("code", flat=True)), {"mh2", "neo", "dmr", "dmu"})
+        self.assertEqual(Blueprint.objects.count(), 8)
+        self.assertFalse(Expansion.objects.filter(blueprints_synced_at__isnull=True).exists())
+        rag = Blueprint.objects.get(ct_id=1001)
+        self.assertEqual((rag.name, rag.expansion.code, rag.collector_number), ("Ragavan, Nimble Pilferer", "mh2", "138"))
+        self.assertEqual((rag.cm_price_id, rag.image_url), (555001, "https://img/1001.jpg"))
+        self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 8, 2))
 
-    def test_scryfall_served_with_content_encoding(self):
-        self.sources.content_encoding = True
-        cardmarket.sync(self.client_)
-        self.assertEqual(CardmarketProduct.objects.get(pk=466234).set_code, "m21")
+    def test_first_cardmarket_id_is_used(self):
+        self.sync()
+        self.assertEqual(Blueprint.objects.get(ct_id=1201).cm_price_id, 555201)
 
-    def test_unmatched_product_kept_name_only(self):
-        cardmarket.sync(self.client_)
-        p = CardmarketProduct.objects.get(pk=1)
-        self.assertEqual((p.name, p.set_code, p.trend), ("Altar's Light", "", Decimal("0.06")))
+    def test_blueprint_without_cardmarket_id_has_no_price(self):
+        self.sync()
+        self.assertIsNone(Blueprint.objects.get(ct_id=1002).cm_price_id)
 
-    def test_product_without_guide_row_has_no_prices(self):
-        cardmarket.sync(self.client_)
-        cs = CardmarketProduct.objects.get(pk=900)
-        self.assertEqual((cs.trend, cs.trend_foil), (None, None))
-
-    def test_price_guide_rows_for_unknown_products_ignored(self):
-        cardmarket.sync(self.client_)
-        self.assertFalse(CardmarketProduct.objects.filter(pk=777777).exists())
+    def test_prices_stored(self):
+        self.sync()
+        p = CardmarketPrice.objects.get(pk=555001)
+        self.assertEqual((p.trend, p.trend_foil, p.low_foil), (Decimal("42.00"), Decimal("61.25"), None))
+        self.assertEqual((p.low, p.avg, p.avg30_foil), (Decimal("35.00"), Decimal("40.50"), Decimal("62.00")))
+        self.assertEqual(p.prices_date.isoformat(), "2026-11-07T01:45:31+00:00")
 
     def test_sync_twice_no_duplicates_prices_overwritten(self):
-        cardmarket.sync(self.client_)
-        self.sources.guide["priceGuides"][0]["trend"] = 20.0
-        cardmarket.sync(self.client_)
-        self.assertEqual(CardmarketProduct.objects.count(), 3)
-        self.assertEqual(CardmarketProduct.objects.get(pk=466234).trend, Decimal("20.00"))
+        self.sync()
+        self.guide.guide["priceGuides"][0]["trend"] = 50.0
+        self.ct.blueprints[10][0]["name"] = "Ragavan (renamed)"
+        self.sync()
+        self.assertEqual(Blueprint.objects.count(), 8)
+        self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("50.00"))
+        self.assertEqual(Blueprint.objects.get(ct_id=1001).name, "Ragavan (renamed)")
 
-    def test_links_cards_case_insensitive_and_leading_zeros(self):
-        cs = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="045")
-        ugin = Card.objects.create(name="Ugin", set_code="M21", collector_number="1")
-        other = Card.objects.create(name="Ugin", set_code="PLST", collector_number="1")
-        legacy = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="")
-        result = cardmarket.sync(self.client_)
-        for card, expected in ((cs, 900), (ugin, 466234), (other, None), (legacy, None)):
-            card.refresh_from_db()
-            self.assertEqual(card.cm_product_id, expected, card)
-        self.assertEqual((result.linked, result.unlinked), (2, 2))
+    def test_duplicate_guide_rows_do_not_break_sync(self):
+        self.guide.guide["priceGuides"].append(dict(self.guide.guide["priceGuides"][0]))
+        self.sync()
+        self.assertEqual(CardmarketPrice.objects.filter(pk=555001).count(), 1)
 
-    def test_link_removed_when_printing_no_longer_matches(self):
-        card = Card.objects.create(name="Ugin", set_code="M21", collector_number="1")
-        cardmarket.sync(self.client_)
-        self.sources.scryfall_cards[0]["collector_number"] = "2"
-        cardmarket.sync(self.client_)
-        card.refresh_from_db()
-        self.assertIsNone(card.cm_product_id)
+    def test_failed_expansion_skipped_and_reported(self):
+        self.ct.fail_export = {11}
+        result = self.sync()
+        self.assertEqual(result.failed, ["neo"])
+        self.assertFalse(Blueprint.objects.filter(expansion__code="neo").exists())
+        self.assertTrue(Blueprint.objects.filter(ct_id=1001).exists())
+        self.assertIsNone(Expansion.objects.get(code="neo").blueprints_synced_at)
 
-    def test_source_failure_changes_nothing_and_logs_warning(self):
-        CardmarketProduct.objects.create(id_product=466234, name="Ugin", trend=Decimal("1.00"))
-        self.sources.fail.add("guide")
-        self.assertIsNone(cardmarket.run_sync(self.client_))
-        self.assertEqual(CardmarketProduct.objects.get(pk=466234).trend, Decimal("1.00"))
-        self.assertEqual(CardmarketProduct.objects.count(), 1)
+    def test_guide_failure_changes_nothing_and_logs_warning(self):
+        CardmarketPrice.objects.create(id_product=555001, trend=Decimal("1.00"))
+        self.guide.fail = True
+        self.assertIsNone(cardmarket.run_sync(self.cm))
+        self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("1.00"))
+        self.assertFalse(Blueprint.objects.exists())
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
         self.assertIn("Cardmarket sync failed", log.message)
 
-    def test_scryfall_failure_changes_nothing(self):
-        self.sources.fail.add("scryfall")
-        self.assertIsNone(cardmarket.run_sync(self.client_))
-        self.assertEqual(CardmarketProduct.objects.count(), 0)
+    def test_malformed_guide_changes_nothing(self):
+        self.guide.raw = b"not json"
+        self.assertIsNone(cardmarket.run_sync(self.cm))
+        self.assertFalse(Blueprint.objects.exists())
 
-    def test_malformed_json_changes_nothing(self):
-        self.sources.raw["products"] = b"not json"
-        self.assertIsNone(cardmarket.run_sync(self.client_))
-        self.assertEqual(CardmarketProduct.objects.count(), 0)
+    def test_cardtrader_expansions_failure_changes_nothing(self):
+        with mock.patch.object(FakeCardTrader, "handler", lambda s, r: httpx.Response(500, json={})):
+            self.assertIsNone(cardmarket.run_sync(self.cm))
+        self.assertFalse(CardmarketPrice.objects.exists())
+        self.assertIn("Cardmarket sync failed", SyncLog.objects.first().message)
 
-    def test_malformed_scryfall_changes_nothing(self):
-        self.sources.raw["scryfall"] = b'{"cardmarket_id": 466234}\n{"cardmarket_id": 1, '
-        self.assertIsNone(cardmarket.run_sync(self.client_))
-        self.assertEqual(CardmarketProduct.objects.count(), 0)
-
-    def test_duplicate_product_rows_do_not_break_sync(self):
-        self.sources.products["products"].append(dict(self.sources.products["products"][0]))
-        result = cardmarket.sync(self.client_)
-        self.assertEqual(result.products, 3)
-        self.assertEqual(CardmarketProduct.objects.count(), 3)
+    def test_missing_cardtrader_token_logs_warning(self):
+        services.make_client.side_effect = services.CardTraderError("CardTrader API token is not configured.")
+        self.assertIsNone(cardmarket.run_sync(self.cm))
+        self.assertIn("token is not configured", SyncLog.objects.first().message)
 
     def test_unexpected_failure_is_logged_and_raised(self):
-        with mock.patch.object(CardmarketProduct.objects, "bulk_create", side_effect=RuntimeError("db down")):
+        with mock.patch.object(CardmarketPrice.objects, "bulk_create", side_effect=RuntimeError("db down")):
             with self.assertRaises(RuntimeError):
-                cardmarket.run_sync(self.client_)
+                cardmarket.run_sync(self.cm)
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
         self.assertEqual(log.message, "Cardmarket sync failed: RuntimeError: db down")
 
-    def test_run_sync_logs_counts(self):
-        Card.objects.create(name="Ugin", set_code="M21", collector_number="1")
-        cardmarket.run_sync(self.client_)
+    def test_run_sync_logs_counts_and_unlinked_cards(self):
+        Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45")
+        Card.objects.create(name="Ragavan", set_code="MH2", collector_number="", ct_blueprint_id=1001)
+        Card.objects.create(name="X", set_code="PLST", collector_number="9")
+        cardmarket.run_sync(self.cm)
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.OK)
         self.assertEqual(
             log.message,
-            "Cardmarket: 3 products, 2 priced (guide 2026-11-07), 1 cards linked, 0 not linked",
+            "Cardmarket: 4 expansions, 8 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
         )
+
+    def test_run_sync_mentions_failed_expansions(self):
+        self.ct.fail_export = {11, 13}
+        cardmarket.run_sync(self.cm)
+        log = SyncLog.objects.first()
+        self.assertEqual(log.level, SyncLog.Level.WARNING)
+        self.assertIn("2 expansions not loaded (dmu, neo)", log.message)
 
 
 class SyncCommandTest(TestCase):
