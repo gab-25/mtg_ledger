@@ -6,14 +6,13 @@ Authentication is the Django session; CSRF comes from the csrftoken cookie, sent
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from ledger import services as ledger_services
-from ledger.api.common import form_errors, messages_response, msg
+from ledger.api.common import doc, form_errors, messages_response, msg
 from ledger.cardtrader import CardTraderError
 from ledger.models import Listing, Order
 
@@ -35,7 +34,7 @@ def _user(user):
     }
 
 
-@extend_schema(tags=TAGS, summary="The logged-in user and the sidebar counters")
+@doc(TAGS, "The logged-in user and the sidebar counters")
 @api_view(["GET"])
 def me(request):
     user = request.user
@@ -48,7 +47,7 @@ def me(request):
     })
 
 
-@extend_schema(tags=TAGS, summary="Set the CSRF cookie (for the login form)")
+@doc(TAGS, "Set the CSRF cookie (for the login form)")
 @api_view(["GET"])
 @authentication_classes([])
 @permission_classes([AllowAny])
@@ -57,7 +56,7 @@ def csrf(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@extend_schema(tags=TAGS, summary="Log in with username and password")
+@doc(TAGS, "Log in with username and password")
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
@@ -70,14 +69,14 @@ def login_view(request):
     return Response({"ok": True})
 
 
-@extend_schema(tags=TAGS, summary="Log out")
+@doc(TAGS, "Log out")
 @api_view(["POST"])
 def logout_view(request):
     logout(request)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@extend_schema(tags=TAGS, summary="Profile page data: the CardTrader connection")
+@doc(TAGS, "Profile page data: the CardTrader connection")
 @api_view(["GET"])
 def account(request):
     user = request.user
@@ -92,7 +91,7 @@ def account(request):
     })
 
 
-@extend_schema(tags=TAGS, summary="Change first name, last name and email")
+@doc(TAGS, "Change first name, last name and email")
 @api_view(["PUT"])
 def profile(request):
     form = ProfileForm(request.data, instance=request.user)
@@ -102,7 +101,7 @@ def profile(request):
     return messages_response(msg("success", "Profile updated."))
 
 
-@extend_schema(tags=TAGS, summary="Change the password (the session stays logged in)")
+@doc(TAGS, "Change the password (the session stays logged in)")
 @api_view(["POST"])
 def password(request):
     form = PasswordChangeForm(request.user, request.data)
@@ -113,7 +112,7 @@ def password(request):
     return messages_response(msg("success", "Password changed."))
 
 
-@extend_schema(tags=TAGS, summary="Connect (PUT) or disconnect (DELETE) CardTrader with an API token")
+@doc(TAGS, "Connect (PUT) or disconnect (DELETE) CardTrader with an API token")
 @api_view(["PUT", "DELETE"])
 def cardtrader_token(request):
     user = request.user

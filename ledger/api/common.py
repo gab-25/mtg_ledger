@@ -1,11 +1,19 @@
 """Helpers shared by the page APIs: flash-style messages, Django form errors, pagination, safe redirects."""
 
 from django.core.paginator import Paginator
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from django.utils.http import url_has_allowed_host_and_scheme
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 PAGE_SIZE = 50
+
+
+def doc(tags, summary, request=None):
+    """OpenAPI entry of a page API view: JSON objects in and out (the shapes are documented on each view)."""
+    return extend_schema(tags=tags, summary=summary, request=request or OpenApiTypes.OBJECT,
+                         responses=OpenApiTypes.OBJECT)
 
 
 def msg(level, text):
