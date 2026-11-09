@@ -123,8 +123,8 @@ are created as *To publish*).
   (cd ../mtg_ledger_scan && npm run build)
   SCAN_APP_DIR=../mtg_ledger_scan/dist uv run python manage.py runserver
   ```
-- The Docker image downloads a pinned release of the app (`ARG SCAN_VERSION` in the `Dockerfile`). To ship a new
-  version of the scan app, publish a release in mtg_ledger_scan, then bump `SCAN_VERSION` here.
+- The Docker image downloads the latest release of the app at build time: to ship a new version of the scan app,
+  publish a release in mtg_ledger_scan and rebuild.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.

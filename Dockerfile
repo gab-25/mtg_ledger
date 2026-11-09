@@ -17,9 +17,9 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
-# The React scan app (gab-25/mtg_ledger_scan), pinned: bump SCAN_VERSION to ship a new release.
-ARG SCAN_VERSION=0.1.0
-ADD https://github.com/gab-25/mtg_ledger_scan/releases/download/v${SCAN_VERSION}/mtg-ledger-scan-${SCAN_VERSION}.tar.gz /tmp/scan.tgz
+# The React scan app (gab-25/mtg_ledger_scan), always the latest release: ADD checks the download on every
+# build, so a new release invalidates the cache.
+ADD https://github.com/gab-25/mtg_ledger_scan/releases/latest/download/mtg-ledger-scan.tar.gz /tmp/scan.tgz
 RUN rm -rf /app/scan_app && mkdir -p /app/scan_app && tar -xzf /tmp/scan.tgz -C /app/scan_app && rm /tmp/scan.tgz
 
 RUN python manage.py collectstatic --noinput
