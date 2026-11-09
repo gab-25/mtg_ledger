@@ -97,6 +97,8 @@ class OpenRouterClient:
             ]}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "card", "strict": True, "schema": SCHEMA}},
             "temperature": 0,
+            # Reading a card needs no reasoning; reasoning models (e.g. Qwen) would get slow and costly.
+            "reasoning": {"enabled": False},
         })
         try:
             content = data["choices"][0]["message"]["content"]
