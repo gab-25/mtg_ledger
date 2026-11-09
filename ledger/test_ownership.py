@@ -125,10 +125,9 @@ class OwnerIsolationSweepTest(LedgerTestCase):
 
     # URL name → how to find one of self.user's objects for its argument
     TARGETS = {
-        "item_edit": lambda t: t.item.pk, "item_delete": lambda t: t.item.pk,
-        "listing_edit": lambda t: t.listing.item_id, "listing_delete": lambda t: t.listing.item_id,
-        "order_detail": lambda t: t.order.pk, "order_ship": lambda t: t.order.pk,
-        "resolve": lambda t: t.conflict.pk,
+        "api_item": lambda t: t.item.pk, "api_listing": lambda t: t.listing.item_id,
+        "api_order": lambda t: t.order.pk, "api_order_ship": lambda t: t.order.pk,
+        "api_resolve": lambda t: t.conflict.pk,
         "scan_api_session": lambda t: t.session.uuid, "scan_api_captures": lambda t: t.session.uuid,
         "scan_api_search": lambda t: t.session.uuid, "scan_api_manual": lambda t: t.session.uuid,
         "scan_api_review": lambda t: t.session.uuid, "scan_api_threshold": lambda t: t.session.uuid,
@@ -136,7 +135,6 @@ class OwnerIsolationSweepTest(LedgerTestCase):
         "scan_api_line": lambda t: t.line.uuid, "scan_api_undo": lambda t: t.line.uuid,
         "scan_api_confirm": lambda t: t.line.uuid, "scan_api_frame": lambda t: t.line.uuid,
     }
-    NOT_OBJECTS = {"scan_app"}  # <path:rest> is a client-side route of the SPA, not an object
 
     def setUp(self):
         super().setUp()
@@ -151,7 +149,7 @@ class OwnerIsolationSweepTest(LedgerTestCase):
     def test_every_object_url_is_covered(self):
         from .urls import urlpatterns
 
-        with_args = {p.name for p in urlpatterns if p.pattern.converters} - self.NOT_OBJECTS
+        with_args = {p.name for p in urlpatterns if p.pattern.converters}
         self.assertEqual(with_args - set(self.TARGETS), set(), "new URL with an object id: add it to TARGETS")
 
     def test_other_users_objects_are_404(self):
@@ -174,8 +172,8 @@ class OwnerIsolationSweepTest(LedgerTestCase):
 
     def test_list_pages_show_none_of_the_admins_cards(self):
         names = list(CollectionItem.objects.owned_by(self.user).values_list("card__name", flat=True))
-        for name, params in (("collection", {}), ("sale", {}), ("cards", {"owned": "1"}), ("sync", {}),
-                             ("shipments", {})):
+        for name, params in (("api_collection", {}), ("api_listings", {}), ("api_cards", {"owned": "1"}),
+                             ("api_sync", {}), ("api_orders", {})):
             resp = self.client.get(reverse(f"ledger:{name}"), params)
             with self.subTest(page=name):
                 self.assertEqual(resp.status_code, 200)

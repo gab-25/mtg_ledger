@@ -14,6 +14,7 @@ from rest_framework import serializers
 
 from ..models import Blueprint, Condition, Expansion, Language, ScanLine, ScanSession
 from ..recognition import same_name
+from . import pages
 
 MAX_FRAME_BYTES = 2 * 1024 * 1024
 PHONE_UA = re.compile(r"Mobi|Android|iPhone|iPod", re.IGNORECASE)
@@ -133,7 +134,7 @@ class SessionSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(OpenApiTypes.URI)
     def get_phone_url(self, session):
-        return self.context["request"].build_absolute_uri(reverse("ledger:scan_app", args=[f"{session.uuid}/"]))
+        return self.context["request"].build_absolute_uri(pages.scan_camera(session.uuid))
 
     def get_phone_secure(self, session) -> bool:
         return self.context["request"].is_secure()
@@ -200,10 +201,16 @@ class ReviewSerializer(serializers.Serializer):
     listed = serializers.IntegerField(help_text="Copies that will be queued for sale")
 
 
+class MessageSerializer(serializers.Serializer):
+    level = serializers.ChoiceField(choices=["success", "warning", "error"])
+    text = serializers.CharField()
+
+
 class SaveResultSerializer(serializers.Serializer):
     saved = serializers.IntegerField()
     listed = serializers.IntegerField()
     redirect = serializers.CharField(help_text="Where to go next (the collection)")
+    messages = MessageSerializer(many=True, help_text="To show on the next page, like Django's messages")
 
 
 # --- requests ---

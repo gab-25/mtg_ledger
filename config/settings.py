@@ -84,7 +84,6 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'ledger.context_processors.sidebar',
             ],
         },
     },
@@ -147,11 +146,11 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# The built React scan app (gab-25/mtg_ledger_ui): index.html is served for /scan/..., its assets under
-# /static/scan/ (the Vite build uses base "/static/scan/"). The Docker image unpacks a release here.
-SCAN_APP_DIR = Path(os.environ.get('SCAN_APP_DIR') or BASE_DIR / 'scan_app').resolve()
-if SCAN_APP_DIR.is_dir():
-    STATICFILES_DIRS = [('scan', SCAN_APP_DIR)]
+# The built React UI (gab-25/mtg_ledger_ui): index.html is served for every page URL, its assets under
+# /static/ui/ (the Vite build uses base "/static/ui/"). The Docker image unpacks a release here.
+UI_APP_DIR = Path(os.environ.get('UI_APP_DIR') or BASE_DIR / 'ui_app').resolve()
+if UI_APP_DIR.is_dir():
+    STATICFILES_DIRS = [('ui', UI_APP_DIR)]
 
 
 # REST API (/api/): the Django session authenticates, CSRF as for forms (X-CSRFToken header), JSON only.
@@ -171,7 +170,7 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'MTG Ledger API',
-    'DESCRIPTION': 'The JSON API of MTG Ledger, used by the React scan app.',
+    'DESCRIPTION': 'The JSON API of MTG Ledger, used by its React UI.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAuthenticated'],
@@ -195,9 +194,10 @@ MAILERS = {
     },
 }
 
-LOGIN_URL = 'login'
-LOGIN_REDIRECT_URL = 'ledger:collection'
-LOGOUT_REDIRECT_URL = 'login'
+# Pages of the React UI (the admin has its own login).
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'
 
 
 # Card recognition from the camera (vision model on OpenRouter)

@@ -284,7 +284,7 @@ class MissingServicesTest(ScanApiBase):
         self.set_keys(openrouter="or-key", cardtrader="")
         body = self.assertError(self.capture(session), 503, "service_missing")
         self.assertIn("CardTrader is not connected", body["detail"])
-        self.assertEqual(body["help_url"], reverse("accounts:profile") + "#cardtrader")
+        self.assertEqual(body["help_url"], "/account/#cardtrader")
         self.assertEqual(self.recognizer.calls, 0)
 
     def test_friend_scans_with_admin_token(self):
@@ -316,7 +316,7 @@ class MissingServicesTest(ScanApiBase):
         self.assertEqual(body["warnings"], [])
         self.assertEqual(len(body["missing"]), 1)
         self.assertIn("CardTrader is not connected", body["missing"][0]["message"])
-        self.assertEqual(body["missing"][0]["url"], reverse("accounts:profile") + "#cardtrader")
+        self.assertEqual(body["missing"][0]["url"], "/account/#cardtrader")
         self.assertNotIn("OpenRouter", json.dumps(body))
 
 
@@ -444,9 +444,9 @@ class ReviewTest(ScanApiBase):
         self.assertEqual((body["copies"], body["unique"], body["listed"]), (1, 1, 1))
         self.assertTrue(body["lines"][0]["listed"])
         resp = self.call("post", "scan_api_save", session.uuid)
-        self.assertEqual(resp.json(), {"saved": 1, "listed": 1, "redirect": "/"})
+        self.assertEqual(resp.json(), {"saved": 1, "listed": 1, "redirect": "/", "messages": [
+            {"level": "success", "text": "Saved 1 cards, 1 queued for sale."}]})
         self.assertTrue(CollectionItem.objects.filter(card__ct_blueprint_id=1201).exists())
-        self.assertContains(self.client.get("/"), "Saved 1 cards, 1 queued for sale.")
 
     def test_threshold_cleared(self):
         session = self.start()
@@ -532,7 +532,7 @@ class ProtocolTest(ScanApiBase):
         client.force_login(self.user)
         resp = client.post(reverse("ledger:scan_api_sessions"), "{}", content_type="application/json")
         self.assertError(resp, 403, "permission_denied")
-        client.get(reverse("ledger:scan_start"))
+        client.get(reverse("accounts:api_csrf"))
         token = client.cookies["csrftoken"].value
         resp = client.post(reverse("ledger:scan_api_sessions"), "{}", content_type="application/json",
                            HTTP_X_CSRFTOKEN=token)
@@ -570,43 +570,7 @@ class SchemaTest(LedgerTestCase):
         self.client.logout()
         self.assertEqual(self.client.get(reverse("api_schema")).status_code, 403)
         resp = self.client.get(reverse("api_docs"))
-        self.assertRedirects(resp, f"{reverse('login')}?next=/api/docs/", fetch_redirect_response=False)
-
-
-class ScanAppTest(LedgerTestCase):
-    def setUp(self):
-        super().setUp()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = Path(tmp.name)
-        override = self.settings(SCAN_APP_DIR=self.dir)
-        override.enable()
-        self.addCleanup(override.disable)
-
-    def test_spa_routes_serve_index_and_set_csrf_cookie(self):
-        (self.dir / "index.html").write_text("<!doctype html><div id=root></div>")
-        for url in ("/scan/", "/scan/0b3c6e3e-0000-4000-8000-000000000000/",
-                    "/scan/0b3c6e3e-0000-4000-8000-000000000000/review/"):
-            with self.subTest(url=url):
-                resp = self.client.get(url)
-                self.assertEqual(resp.status_code, 200)
-                self.assertEqual(resp.content, b"<!doctype html><div id=root></div>")
-                self.assertTrue(resp["Content-Type"].startswith("text/html"))
-                self.assertIn("csrftoken", resp.cookies)
-
-    def test_503_when_the_build_is_missing(self):
-        resp = self.client.get("/scan/")
-        self.assertEqual(resp.status_code, 503)
-        self.assertIn(b"Scan app not built: set SCAN_APP_DIR (see README)", resp.content)
-
-    def test_spa_needs_login(self):
-        self.client.logout()
-        resp = self.client.get("/scan/")
-        self.assertRedirects(resp, f"{reverse('login')}?next=/scan/", fetch_redirect_response=False)
-
-    def test_collection_links_to_scan(self):
-        self.assertContains(self.client.get(reverse("ledger:collection")), reverse("ledger:scan_start"))
-        self.assertEqual(reverse("ledger:scan_start"), "/scan/")
+        self.assertRedirects(resp, "/login/?next=/api/docs/", fetch_redirect_response=False)
 
 
 class ScanIsolationTest(ScanApiBase):

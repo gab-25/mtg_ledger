@@ -7,4 +7,4 @@ db.sqlite3*
 staticfiles
 docs
 .env
-scan_app
+ui_app

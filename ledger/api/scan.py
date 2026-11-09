@@ -1,14 +1,12 @@
-"""The camera scan flow (/api/scan/), used by the React scan app served at /scan/.
+"""The camera scan flow (/api/scan/), used by the scan screens of the React UI (/scan/...).
 
 Authentication is the Django session; CSRF comes from the csrftoken cookie, sent back as X-CSRFToken.
 """
 
 import logging
 
-from django.contrib import messages
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
-from django.urls import reverse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
@@ -20,7 +18,9 @@ from .. import catalog, pricing, recognition, scan, services
 from ..cardtrader import CardTraderError
 from ..models import Blueprint, Condition, Expansion, Language, ScanLine, ScanSession
 from ..openrouter import OpenRouterError
+from . import pages
 from . import serializers as s
+from .common import msg
 from .errors import Blocked, Closed, ServiceError, ServiceMissing
 
 SEARCH_LIMIT = 20
@@ -47,7 +47,7 @@ def _missing_services(user):
     if not services.service_token():
         if user.is_superuser:
             missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
-                            reverse("accounts:profile") + "#cardtrader"))
+                            pages.PROFILE_CARDTRADER))
         else:
             missing.append(("Card catalog and prices are unavailable: ask the administrator to connect CardTrader.",
                             ""))
@@ -291,9 +291,10 @@ def save(request, uid):
         if "already saved" in str(exc):  # saved by another request in the meantime
             raise Closed()
         raise Blocked(str(exc))
-    messages.success(request, f"Saved {saved} cards, {listed} queued for sale.")
-    return Response(s.SaveResultSerializer(
-        {"saved": saved, "listed": listed, "redirect": reverse("ledger:collection")}).data)
+    return Response(s.SaveResultSerializer({
+        "saved": saved, "listed": listed, "redirect": pages.COLLECTION,
+        "messages": [msg("success", f"Saved {saved} cards, {listed} queued for sale.")],
+    }).data)
 
 
 @extend_schema(tags=TAGS, request=s.LineUpdateSerializer, responses=s.LineResultSerializer,
