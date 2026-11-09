@@ -72,7 +72,7 @@ class CardsPageTest(LedgerTestCase):
     def setUp(self):
         super().setUp()
         catalog()
-        self.url = reverse("ledger:cards")
+        self.url = reverse("ledger:api_cards")
 
     def own(self, quantity, **card):
         item = CollectionItem.objects.select_related("card").first()
@@ -82,84 +82,76 @@ class CardsPageTest(LedgerTestCase):
             setattr(item.card, k, v)
         item.card.save()
 
+    def search(self, **params):
+        resp = self.client.get(self.url, params)
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def names(self, **params):
+        return [p["name"] for p in self.search(**params)["results"]]
+
     def test_requires_login(self):
         self.client.logout()
-        self.assertEqual(self.client.get(self.url).status_code, 302)
-
-    def test_page_is_called_cards(self):
-        r = self.client.get(self.url)
-        self.assertContains(r, "<h1>Cards</h1>", html=True)
+        self.assertEqual(self.client.get(self.url).status_code, 403)
 
     def test_search_name_case_insensitive_substring(self):
-        r = self.client.get(self.url, {"q": "spirit drag"})
-        self.assertContains(r, "Ugin, the Spirit Dragon")
-        self.assertContains(r, "M21 #1")
-        for value in ("12.75", "10.00", "12.50", "14.34"):
-            self.assertContains(r, value)
-        self.assertContains(r, "https://img/ugin.jpg")
-        self.assertNotContains(r, "Basri")
+        data = self.search(q="spirit drag")
+        self.assertTrue(data["searched"])
+        [ugin] = data["results"]
+        self.assertEqual((ugin["name"], ugin["expansion_code"], ugin["collector_number"]),
+                         ("Ugin, the Spirit Dragon", "m21", "1"))
+        self.assertEqual(ugin["expansion_name"], "Core Set 2021")
+        self.assertEqual(ugin["prices"], {"trend": "12.75", "low": "10.00", "avg": "12.50",
+                                          "trend_foil": "14.34", "low_foil": None, "avg_foil": None})
+        self.assertEqual(ugin["image_url"], "https://img/ugin.jpg")
+        self.assertIsNone(ugin["owned_qty"])
+        self.assertIsNotNone(data["prices_date"])
 
     def test_search_box_matches_set_code(self):
-        r = self.client.get(self.url, {"q": "M21"})
-        self.assertContains(r, "Ugin, the Spirit Dragon")
-        self.assertContains(r, "Basri Ket")
-        self.assertNotContains(r, "Counterspell")
+        self.assertEqual(self.names(q="M21"), ["Basri Ket", "Ugin, the Spirit Dragon"])
 
     def test_set_filter(self):
-        r = self.client.get(self.url, {"set": "DMR"})
-        self.assertContains(r, "Counterspell")
-        self.assertNotContains(r, "Ugin")
+        self.assertEqual(self.names(set="DMR"), ["Counterspell"])
 
     def test_set_and_number_filter_ignores_leading_zeros(self):
-        r = self.client.get(self.url, {"set": "m21", "number": "007"})
-        self.assertContains(r, "Basri Ket")
-        self.assertNotContains(r, "Ugin")
+        data = self.search(set="m21", number="007")
+        self.assertEqual([p["name"] for p in data["results"]], ["Basri Ket"])
+        self.assertEqual(data["filters"], {"q": "", "set": "m21", "number": "7", "owned": False})
 
     def test_printing_without_price_shows_dashes(self):
-        r = self.client.get(self.url, {"q": "counterspell"})
-        self.assertContains(r, "Counterspell")
-        self.assertNotContains(r, "€")
+        [card] = self.search(q="counterspell")["results"]
+        self.assertIsNone(card["prices"])
 
     def test_owned_by_blueprint_link(self):
         self.own(3, ct_blueprint_id=9001)
-        r = self.client.get(self.url, {"owned": "1"})
-        self.assertContains(r, "Ugin, the Spirit Dragon")
-        self.assertNotContains(r, "Basri Ket")
-        self.assertContains(r, '<td class="num">3</td>', html=True)
+        data = self.search(owned="1")
+        self.assertEqual([(p["name"], p["owned_qty"]) for p in data["results"]], [("Ugin, the Spirit Dragon", 3)])
+        self.assertTrue(data["filters"]["owned"])
 
     def test_owned_by_set_and_number(self):
         self.own(2, ct_blueprint_id=None, set_code="DMR", collector_number="045")
-        r = self.client.get(self.url, {"owned": "1"})
-        self.assertContains(r, "Counterspell")
-        self.assertContains(r, '<td class="num">2</td>', html=True)
+        self.assertEqual([(p["name"], p["owned_qty"]) for p in self.search(owned="1")["results"]],
+                         [("Counterspell", 2)])
 
     def test_owned_only_counts_mine(self):
         self.own(3, ct_blueprint_id=9001)
         self.client.force_login(self.other)
-        r = self.client.get(self.url, {"owned": "1"})
-        self.assertNotContains(r, "Ugin, the Spirit Dragon")
-        r = self.client.get(self.url, {"q": "Ugin"})
-        self.assertContains(r, "Ugin, the Spirit Dragon")
-        self.assertNotContains(r, '<td class="num">3</td>', html=True)
+        self.assertEqual(self.names(owned="1"), [])
+        [ugin] = self.search(q="Ugin")["results"]
+        self.assertIsNone(ugin["owned_qty"])
 
     def test_no_criteria_lists_nothing(self):
-        r = self.client.get(self.url, {"q": "  "})
-        self.assertEqual(r.status_code, 200)
-        self.assertNotContains(r, "Ugin")
+        data = self.search(q="  ")
+        self.assertEqual(data, {"searched": False, "filters": {"q": "", "set": "", "number": "", "owned": False}})
 
     def test_no_results_message(self):
-        r = self.client.get(self.url, {"q": "zzzz"})
-        self.assertContains(r, "No cards match")
+        data = self.search(q="zzzz")
+        self.assertEqual((data["searched"], data["count"], data["results"]), (True, 0, []))
 
     def test_pager_keeps_filters(self):
         tokens = Expansion.objects.create(ct_id=502, code="tm21", name="M21 Tokens")
         Blueprint.objects.bulk_create(
             Blueprint(ct_id=20000 + i, expansion=tokens, name=f"Token {i}") for i in range(60)
         )
-        r = self.client.get(self.url, {"set": "tm21"})
-        self.assertContains(r, "set=tm21")
-
-    def test_nav_link_present(self):
-        r = self.client.get(reverse("ledger:collection"))
-        self.assertContains(r, f'href="{self.url}"')
-        self.assertContains(r, ">Cards</a>")
+        data = self.search(set="tm21", page="2")
+        self.assertEqual((data["count"], data["page"], data["num_pages"], len(data["results"])), (60, 2, 2, 10))
