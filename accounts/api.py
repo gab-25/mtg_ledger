@@ -3,7 +3,7 @@
 Authentication is the Django session; CSRF comes from the csrftoken cookie, sent back as X-CSRFToken.
 """
 
-from django.contrib.auth import login, logout, update_session_auth_hash
+from django.contrib.auth import login, logout, password_validation, update_session_auth_hash
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import status
@@ -88,6 +88,7 @@ def account(request):
             "token_saved": bool(cardtrader.api_token),
         },
         "shares_token": user.is_superuser and ledger_services.service_account_user() == user,
+        "password_help": password_validation.password_validators_help_texts(),
     })
 
 

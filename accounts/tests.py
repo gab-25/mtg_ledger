@@ -38,6 +38,7 @@ class ProfileTest(TestCase):
         self.assertEqual(data["cardtrader"]["name"], "CardTrader")
         self.assertFalse(data["cardtrader"]["token_saved"])
         self.assertFalse(data["shares_token"])
+        self.assertIn("Your password must contain at least 8 characters.", data["password_help"])
 
     def test_update_details(self):
         resp = self.put("api_profile", {"first_name": "Gabriele", "last_name": "S", "email": "new@example.com"})
