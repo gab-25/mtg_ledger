@@ -32,43 +32,39 @@ class ListingSuggestionTest(LedgerTestCase):
         self.item = CollectionItem.objects.select_related("card").first()
         self.item.card.ct_blueprint_id = 9001
         self.item.card.save()
-        self.url = reverse("ledger:listing_edit", args=[self.item.pk])
+        self.url = reverse("ledger:api_listing", args=[self.item.pk])
+
+    def suggestion(self):
+        return self.client.get(self.url).json()["cm_suggestion"]
 
     def test_shows_trend_for_non_foil_item(self):
         self.item.foil = False
         self.item.save()
-        r = self.client.get(self.url)
-        self.assertContains(r, "Cardmarket trend")
-        self.assertContains(r, "12.75")
-        self.assertContains(r, 'data-suggested-price="12.75"')
+        self.assertEqual(self.suggestion(), "12.75")
 
     def test_shows_foil_trend_for_foil_item(self):
         self.item.foil = True
         self.item.save()
-        r = self.client.get(self.url)
-        self.assertContains(r, 'data-suggested-price="14.34"')
-        self.assertNotContains(r, 'data-suggested-price="12.75"')
+        self.assertEqual(self.suggestion(), "14.34")
 
     def test_foil_item_without_foil_trend_gets_no_suggestion(self):
         CardmarketPrice.objects.filter(pk=466234).update(trend_foil=None)
         self.item.foil = True
         self.item.save()
-        r = self.client.get(self.url)
-        self.assertNotContains(r, "data-suggested-price")
-        self.assertNotContains(r, "12.75")
+        self.assertIsNone(self.suggestion())
 
     def test_unknown_printing_shows_dash_and_no_button(self):
         self.item.card.ct_blueprint_id = None
         self.item.card.set_code = "PLST"
         self.item.card.save()
-        r = self.client.get(self.url)
-        self.assertContains(r, "Cardmarket trend")
-        self.assertNotContains(r, "data-suggested-price")
+        self.assertIsNone(self.suggestion())
 
     def test_suggestion_does_not_change_saved_price(self):
         Listing.objects.filter(item=self.item).delete()
-        r = self.client.post(self.url, {"quantity": 1, "price": "3.00", "market_price": "", "status": "to_publish"})
-        self.assertEqual(r.status_code, 302)
+        self.suggestion()
+        r = self.client.put(self.url, {"quantity": 1, "price": "3.00", "market_price": "", "status": "to_publish"},
+                            content_type="application/json")
+        self.assertEqual(r.status_code, 200)
         self.assertEqual(Listing.objects.get(item=self.item).price, Decimal("3.00"))
 
 

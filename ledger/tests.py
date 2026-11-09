@@ -258,7 +258,7 @@ class LedgerTestCase(TestCase):
         self.addCleanup(pause.stop)
 
     def publish(self):
-        return self.client.post(reverse("ledger:publish"))
+        return self.client.post(reverse("ledger:api_publish"))
 
 
 class PagesTest(LedgerTestCase):
@@ -487,10 +487,10 @@ class PublishTest(LedgerTestCase):
         self.publish()
         listing = Listing.objects.get(item__card__name="Counterspell")
         pid = listing.ct_product_id
-        resp = self.client.post(reverse("ledger:listing_edit", args=[listing.item.pk]), {
+        resp = self.client.put(reverse("ledger:api_listing", args=[listing.item.pk]), {
             "quantity": 2, "price": "0.95", "market_price": "0.70", "status": "published",
-        })
-        self.assertRedirects(resp, reverse("ledger:sale"))
+        }, content_type="application/json")
+        self.assertEqual(resp.json()["messages"][0]["text"], "Listing for Counterspell saved.")
         self.publish()
         listing.refresh_from_db()
         self.assertEqual(listing.ct_product_id, pid)
@@ -507,26 +507,100 @@ class PublishTest(LedgerTestCase):
             set(Listing.objects.filter(status=Listing.Status.TO_PUBLISH).values_list("item__card__name", flat=True)),
             {"Counterspel", "Sheoldred, the Apocalypse"},
         )
-        messages = [str(m) for m in resp.wsgi_request._messages]
-        self.assertTrue(any("not found in the CardTrader catalog" in m for m in messages))
+        messages = resp.json()["messages"]
+        self.assertEqual(messages[0], {"level": "success", "text": "Published 1 listing to CardTrader."})
+        warnings = [m["text"] for m in messages if m["level"] == "warning"]
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any(w.startswith("Counterspel: ") and "not found in the CardTrader catalog" in w
+                            for w in warnings))
 
     def test_api_error_is_shown(self):
         with mock.patch.object(services, "make_client", side_effect=CardTraderError("no token")):
-            resp = self.client.post(reverse("ledger:publish"), follow=True)
-        self.assertContains(resp, "Publish failed: no token")
+            resp = self.publish()
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(resp.json(), {"detail": "Publish failed: no token", "code": "service_error"})
 
     def test_delete_listing_removes_remote_product(self):
         self.publish()
         listing = Listing.objects.get(item__card__name="Counterspell")
         pid = listing.ct_product_id
-        self.client.post(reverse("ledger:listing_delete", args=[listing.item.pk]))
+        resp = self.client.delete(reverse("ledger:api_listing", args=[listing.item.pk]))
+        self.assertEqual(resp.json()["messages"], [{"level": "success", "text": "Listing removed."}])
         self.assertNotIn(pid, self.ct.products)
         self.assertFalse(Listing.objects.filter(pk=listing.pk).exists())
+
+    def test_delete_listing_error_keeps_it(self):
+        self.publish()
+        listing = Listing.objects.get(item__card__name="Counterspell")
+        with mock.patch.object(services, "remove_listing", side_effect=CardTraderError("down")):
+            resp = self.client.delete(reverse("ledger:api_listing", args=[listing.item.pk]))
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(resp.json()["detail"], "Listing not removed: down")
+        self.assertTrue(Listing.objects.filter(pk=listing.pk).exists())
+
+
+class SaleApiTest(LedgerTestCase):
+    def listing(self, name="Counterspell"):
+        return Listing.objects.select_related("item__card").get(item__card__name=name)
+
+    def put(self, item_pk, **data):
+        return self.client.put(reverse("ledger:api_listing", args=[item_pk]), data, content_type="application/json")
+
+    def test_listings_stats_and_filter(self):
+        data = self.client.get(reverse("ledger:api_listings")).json()
+        self.assertEqual(set(data["stats"]), {"active", "value", "sold_month", "to_publish"})
+        self.assertEqual(data["stats"]["to_publish"], 3)
+        self.assertEqual(data["status"], "")
+        row = next(r for r in data["results"] if r["name"] == "Counterspell")
+        self.assertEqual(set(row), {"item_id", "name", "set_code", "condition", "language", "foil", "quantity",
+                                    "price", "market_price", "pip", "badge"})
+        sold = self.client.get(reverse("ledger:api_listings"), {"status": "sold"}).json()
+        self.assertEqual(sold["status"], "sold")
+        self.assertEqual({r["badge"]["label"] for r in sold["results"]}, {"Sold"})
+
+    def test_edit_published_listing_requeues(self):
+        self.publish()
+        listing = self.listing()
+        self.assertEqual(listing.status, Listing.Status.PUBLISHED)
+        self.put(listing.item_id, quantity=listing.quantity, price="0.99", market_price="", status="published")
+        listing.refresh_from_db()
+        self.assertEqual((listing.price, listing.status), (Decimal("0.99"), Listing.Status.TO_PUBLISH))
+
+    def test_mark_sold_sets_sold_at(self):
+        listing = self.listing()
+        self.put(listing.item_id, quantity=1, price="1.00", market_price="", status="sold")
+        listing.refresh_from_db()
+        self.assertIsNotNone(listing.sold_at)
+
+    def test_quantity_over_owned(self):
+        listing = self.listing()
+        owned = listing.item.quantity
+        resp = self.put(listing.item_id, quantity=owned + 1, price="1.00", market_price="", status="to_publish")
+        self.assertEqual(resp.status_code, 400)
+        copies = "copy" if owned == 1 else "copies"
+        self.assertEqual(resp.json(), {"quantity": [f"You only own {owned} {copies}."]})
+
+    def test_new_listing_defaults(self):
+        item = CollectionItem.objects.filter(owner=self.user, listing__isnull=True).select_related("card").first()
+        data = self.client.get(reverse("ledger:api_listing", args=[item.pk])).json()
+        self.assertEqual(data["item"]["name"], item.card.name)
+        self.assertEqual(data["item"]["quantity"], item.quantity)
+        self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": f"{item.price:.2f}",
+                                           "market_price": None, "status": "to_publish"})
+        resp = self.put(item.pk, quantity=1, price="2.00", market_price="", status="to_publish")
+        self.assertEqual(resp.json()["messages"][0]["text"], f"Listing for {item.card.name} saved.")
+        self.assertTrue(self.client.get(reverse("ledger:api_listing", args=[item.pk])).json()["listing"]["exists"])
+
+    def test_match_prices_message(self):
+        resp = self.client.post(reverse("ledger:api_match_prices"))
+        self.assertRegex(resp.json()["messages"][0]["text"], r"^\d+ prices matched to market\.$")
+        resp = self.client.post(reverse("ledger:api_match_prices"))
+        self.assertEqual(resp.json()["messages"][0]["text"], "All prices already match the market.")
 
 
 class MarketTest(LedgerTestCase):
     def test_match_market_prices_uses_same_condition_and_ignores_own_offers(self):
-        self.client.post(reverse("ledger:match_prices"))
+        self.client.post(reverse("ledger:api_match_prices"))
         solitude = Listing.objects.get(item__card__name="Solitude")  # EX -> Slightly Played
         self.assertEqual(solitude.market_price, Decimal("22.40"))
         self.assertEqual(solitude.price, Decimal("22.40"))
