@@ -13,7 +13,7 @@ from django.urls import reverse
 from . import catalog, services
 from .api.serializers import MAX_FRAME_BYTES
 from .cardtrader import CardTraderError
-from .models import CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
+from .models import Blueprint, CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
 from .openrouter import OpenRouterError
 from .recognition import Recognition
 from .tests import LedgerTestCase
@@ -312,6 +312,18 @@ class ConfirmTest(ScanApiBase):
         self.assertEqual((confirmed["language"], confirmed["condition"], confirmed["foil"]), ("IT", "EX", True))
         self.assertIsNone(confirmed["frame_url"])
         self.assertEqual(resp.json()["count"], 1)
+
+    def test_candidates_say_which_match_the_name_read(self):
+        session = self.start()
+        dmr = Expansion.objects.get(code="dmr")
+        Blueprint.objects.create(ct_id=1299, expansion=dmr, name="Ponder", collector_number="45")
+        self.recognizer.result = Recognition(name="Lotus Petal", set_code="dmr", collector_number="045", language="EN")
+        line = self.capture(session).json()["line"]
+        self.assertEqual(line["read_name"], "Lotus Petal")
+        self.assertEqual([(c["id"], c["matches_name"]) for c in line["candidates"]], [(1201, False), (1299, False)])
+        self.recognizer.result = Recognition(name="Counterspell", set_code="dmr", collector_number="45", language="")
+        line = self.capture(session, "c2").json()["line"]
+        self.assertEqual([(c["id"], c["matches_name"]) for c in line["candidates"]], [(1201, True)])
 
     def test_confirm_needs_card_and_language(self):
         session = self.start()

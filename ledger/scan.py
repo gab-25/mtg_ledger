@@ -108,6 +108,7 @@ def add_capture(session, client, rec, m, *, frame, capture_id="", capture=None):
         line = ScanLine.objects.create(
             session=session, language=rec.language, foil=rec.foil, condition=session.default_condition,
             needs_confirmation=True, candidates=[b.ct_id for b in m.candidates], frame=frame,
+            read_name=rec.name.strip()[:200],
             type_line=rec.type_line, color=rec.color,
         )
         merged = False

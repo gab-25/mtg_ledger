@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from django.core.cache import cache
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Q
 
 from . import catalog
 from .models import Blueprint
@@ -71,18 +71,28 @@ def _by_name(qs, name):
     return qs.filter(Q(name__iexact=name) | Q(name__istartswith=f"{name} // "))
 
 
-def _ordered(qs):
-    """Base version first, then by collector number."""
-    return list(
-        qs.select_related("expansion")
-        .annotate(alt=Case(When(version="", then=Value(0)), default=Value(1), output_field=IntegerField()))
-        .order_by("alt", "ct_id")[:MAX_CANDIDATES]
-    )
-
-
-def _same_name(bp, name):
+def same_name(bp, name):
+    """The printing carries the name read (for a split card, its front face)."""
     a, b = bp.name.casefold(), name.strip().casefold()
     return a == b or a.split(" // ")[0] == b
+
+
+def _candidates(scope, name, hits=()):
+    """Cards with the name read first (number hits, then the scope, then anywhere if the scope has none),
+    then number hits with another name. Within each group: base version first, then by ct_id."""
+    named = list(_by_name(Blueprint.objects.all(), name).select_related("expansion"))
+    in_scope = set(scope.filter(pk__in=[b.pk for b in named]).values_list("pk", flat=True))
+    if in_scope:
+        named = [b for b in named if b.pk in in_scope]
+    hit_ids = {h.pk for h in hits}
+    named_ids = {b.pk for b in named}
+
+    def rank(bp):
+        place = 0 if bp.pk in hit_ids else 1 if bp.pk in in_scope else 2
+        return (place if bp.pk in named_ids else 3, bp.version != "", bp.ct_id)
+
+    others = [h for h in hits if h.pk not in named_ids]
+    return sorted(named + others, key=rank)[:MAX_CANDIDATES]
 
 
 def match(client, rec, expansion):
@@ -91,19 +101,18 @@ def match(client, rec, expansion):
     certain = None
 
     if number:
-        hits = list(scope.filter(collector_number=number).select_related("expansion")[:2])
-        if len(hits) == 1 and (not rec.name or _same_name(hits[0], rec.name)):
-            certain = hits[0]
+        hits = list(scope.filter(collector_number=number).select_related("expansion"))
+        named_hits = [h for h in hits if rec.name and same_name(h, rec.name)]
+        if len(named_hits) == 1 or (len(hits) == 1 and not rec.name.strip()):
+            certain = (named_hits or hits)[0]
         elif hits:
-            ids = {h.pk for h in hits} | set(_by_name(scope, rec.name).values_list("pk", flat=True))
-            return Match(None, _ordered(Blueprint.objects.filter(pk__in=ids)), "ambiguous")
+            return Match(None, _candidates(scope, rec.name, hits), "ambiguous")
 
     if certain is None:
-        named = _ordered(_by_name(scope, rec.name))
-        if not named:
-            return Match(None, [], "not_found")
-        if len(named) > 1:
-            return Match(None, named, "ambiguous")
+        named = list(_by_name(scope, rec.name).select_related("expansion")[:2])
+        if len(named) != 1:
+            candidates = _candidates(scope, rec.name)
+            return Match(None, candidates, "ambiguous" if candidates else "not_found")
         certain = named[0]
 
     if not certain_allowed:
