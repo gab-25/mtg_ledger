@@ -607,3 +607,47 @@ class ScanAppTest(LedgerTestCase):
     def test_collection_links_to_scan(self):
         self.assertContains(self.client.get(reverse("ledger:collection")), reverse("ledger:scan_start"))
         self.assertEqual(reverse("ledger:scan_start"), "/scan/")
+
+
+class ScanIsolationTest(ScanApiBase):
+    """Another user's sessions and lines answer 404, as if they did not exist."""
+
+    def test_other_users_session_and_lines_are_404(self):
+        session = self.start()
+        self.recognizer.result = Recognition(name="Counterspell", language="")
+        line = ScanLine.objects.get(uuid=self.capture(session).json()["line"]["uuid"])
+        self.client.force_login(self.other)
+        frame = SimpleUploadedFile("f.jpg", b"\xff\xd8jpeg", content_type="image/jpeg")
+        session_calls = [
+            ("get", "scan_api_session", None), ("get", "scan_api_review", None),
+            ("get", "scan_api_search", None), ("post", "scan_api_manual", {}),
+            ("put", "scan_api_threshold", {"threshold": "1.00"}), ("post", "scan_api_save", None),
+        ]
+        for method, name, data in session_calls:
+            with self.subTest(name=name):
+                self.assertError(self.call(method, name, session.uuid, data=data), 404, "not_found")
+        with self.subTest(name="scan_api_captures"):
+            resp = self.client.post(reverse("ledger:scan_api_captures", args=[session.uuid]),
+                                    {"frame": frame, "capture_id": "x"})
+            self.assertError(resp, 404, "not_found")
+        line_calls = [
+            ("patch", "scan_api_line", {"quantity": 3}), ("post", "scan_api_undo", None),
+            ("post", "scan_api_confirm", {}),
+        ]
+        for method, name, data in line_calls:
+            with self.subTest(name=name):
+                self.assertError(self.call(method, name, line.uuid, data=data), 404, "not_found")
+        with self.subTest(name="scan_api_frame"):
+            self.assertEqual(self.client.get(reverse("ledger:scan_api_frame", args=[line.uuid])).status_code, 404)
+        line.refresh_from_db()
+        self.assertEqual(line.quantity, 1)
+        self.assertEqual(self.recognizer.calls, 1)
+
+    def test_setup_defaults_come_from_own_last_session(self):
+        self.start(condition="LP")
+        self.client.force_login(self.other)
+        self.assertEqual(self.call("get", "scan_api_setup").json()["defaults"]["condition"], "NM")
+
+    def test_new_session_belongs_to_the_user(self):
+        self.client.force_login(self.other)
+        self.assertEqual(self.start().owner, self.other)

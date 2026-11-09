@@ -15,11 +15,11 @@ class ScanError(Exception):
     pass
 
 
-def start_session(expansion, condition):
-    """New session; the sale threshold is remembered from the latest session."""
-    last = ScanSession.objects.order_by("-created_at", "-id").first()
+def start_session(owner, expansion, condition):
+    """New session for owner; the sale threshold is remembered from their latest session."""
+    last = ScanSession.objects.owned_by(owner).order_by("-created_at", "-id").first()
     return ScanSession.objects.create(
-        expansion=expansion, default_condition=condition,
+        owner=owner, expansion=expansion, default_condition=condition,
         sale_threshold=last.sale_threshold if last else None,
     )
 
@@ -228,7 +228,7 @@ def save_session(session):
         for line in session.lines.select_related("blueprint__expansion"):
             card = _card_for(line)
             item, created = CollectionItem.objects.get_or_create(
-                card=card, condition=line.condition, language=line.language, foil=line.foil,
+                owner=session.owner, card=card, condition=line.condition, language=line.language, foil=line.foil,
                 defaults={"quantity": line.quantity, "price": line.price or 0},
             )
             if not created:
@@ -240,6 +240,6 @@ def save_session(session):
                 listed += line.quantity
         session.status = ScanSession.Status.SAVED
         session.save(update_fields=["status", "updated_at"])
-        SyncLog.objects.create(message=f"Camera scan: {saved} cards saved, {listed} queued for sale")
+        SyncLog.objects.create(owner=session.owner, message=f"Camera scan: {saved} cards saved, {listed} queued for sale")
     original.status = session.status
     return saved, listed
