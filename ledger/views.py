@@ -1,5 +1,6 @@
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -8,6 +9,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
 from . import cardmarket, services
@@ -405,3 +407,16 @@ def orders_sync(request):
     else:
         messages.success(request, f"Orders imported: {created} new, {updated} updated.")
     return redirect("ledger:shipments")
+
+
+@login_required
+@ensure_csrf_cookie
+def scan_app(request, rest=""):
+    """The React scan app: every /scan/... URL serves the built SPA's index.html; the app routes on the client."""
+    index = settings.SCAN_APP_DIR / "index.html"
+    try:
+        html = index.read_bytes()
+    except OSError:
+        return HttpResponse("Scan app not built: set SCAN_APP_DIR (see README)", status=503,
+                            content_type="text/plain; charset=utf-8")
+    return HttpResponse(html, content_type="text/html; charset=utf-8")

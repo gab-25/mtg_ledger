@@ -1,8 +1,0 @@
-<label class="scan-option">
-  <input type="radio" name="blueprint" value="{{ bp.ct_id }}"{% if first %} checked{% endif %}>
-  {% if bp.image_url %}<img src="{{ bp.image_url }}" alt="" loading="lazy">{% else %}<span class="scan-thumb" aria-hidden="true"></span>{% endif %}
-  <span class="scan-option-text">
-    <span class="scan-option-name">{{ bp.name }}</span>
-    <span class="mono sub">{{ bp.expansion.code|upper }} {{ bp.collector_number }}{% if bp.version %} · {{ bp.version }}{% endif %}{% if bp.rarity %} · {{ bp.rarity }}{% endif %}</span>
-  </span>
-</label>

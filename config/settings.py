@@ -53,6 +53,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
+    'rest_framework',
+    'drf_spectacular',
+    'drf_spectacular_sidecar',
     'theme',
     'accounts',
     'ledger',
@@ -143,6 +146,44 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# The built React scan app (gab-25/mtg_ledger_scan): index.html is served for /scan/..., its assets under
+# /static/scan/ (the Vite build uses base "/static/scan/"). The Docker image unpacks a release here.
+SCAN_APP_DIR = Path(os.environ.get('SCAN_APP_DIR') or BASE_DIR / 'scan_app').resolve()
+if SCAN_APP_DIR.is_dir():
+    STATICFILES_DIRS = [('scan', SCAN_APP_DIR)]
+
+
+# REST API (/api/): the Django session authenticates, CSRF as for forms (X-CSRFToken header), JSON only.
+# Errors are DRF's: {"field": ["..."]} for validation, else {"detail", "code", "help_url"?} (ledger.api.errors).
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.SessionAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
+    'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'EXCEPTION_HANDLER': 'ledger.api.errors.exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'MTG Ledger API',
+    'DESCRIPTION': 'The JSON API of MTG Ledger, used by the React scan app.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAuthenticated'],
+    'COMPONENT_SPLIT_REQUEST': True,
+    'ENUM_NAME_OVERRIDES': {
+        'ConditionEnum': 'ledger.models.Condition',
+        'LanguageEnum': 'ledger.models.Language',
+    },
+    'SWAGGER_UI_DIST': 'SIDECAR',
+    'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
+    'REDOC_DIST': 'SIDECAR',
+}
 
 
 # Email
