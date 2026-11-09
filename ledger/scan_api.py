@@ -10,7 +10,6 @@ import logging
 import re
 from decimal import Decimal, InvalidOperation
 
-import segno
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -88,11 +87,6 @@ def _closed():
 def _is_phone(request):
     """Camera scanning is for smartphones (autofocus rear camera); desktops and webcams are not supported."""
     return bool(PHONE_UA.search(request.headers.get("User-Agent", "")))
-
-
-def _qr_svg(url):
-    """Inline SVG QR code (dark modules on white, readable by phone cameras in both themes)."""
-    return segno.make(url, error="m").svg_inline(scale=6, border=2, dark="#121318", light="#FFFFFF")
 
 
 def _openrouter_configured():
@@ -197,7 +191,7 @@ def _session(request, session):
         "uuid": str(session.uuid), "status": session.status, "expansion": _expansion(session.expansion),
         "default_condition": session.default_condition, "sale_threshold": _money(session.sale_threshold),
         "count": _count(session), "last_line": _line(last, session), "is_phone": _is_phone(request),
-        "phone_url": phone_url, "phone_qr_svg": _qr_svg(phone_url), "phone_secure": request.is_secure(),
+        "phone_url": phone_url, "phone_secure": request.is_secure(),
     }
 
 

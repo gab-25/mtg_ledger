@@ -338,13 +338,13 @@ class SearchTest(ScanApiBase):
 
 
 class PhoneTest(ScanApiBase):
-    def test_desktop_gets_qr_of_this_session(self):
+    def test_desktop_gets_the_phone_url_of_this_session(self):
         session = self.start()
         body = self.call("get", "scan_api_session", session.uuid, HTTP_USER_AGENT=DESKTOP, secure=True).json()
         data = body["session"]
         self.assertFalse(data["is_phone"])
         self.assertEqual(data["phone_url"], f"https://testserver/scan/{session.uuid}/")
-        self.assertIn("<svg", data["phone_qr_svg"])
+        self.assertNotIn("phone_qr_svg", data)
         self.assertTrue(data["phone_secure"])
 
     def test_desktop_qr_warns_when_not_https(self):
