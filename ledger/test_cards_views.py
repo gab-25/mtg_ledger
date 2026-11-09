@@ -137,6 +137,15 @@ class CardsPageTest(LedgerTestCase):
         self.assertContains(r, "Counterspell")
         self.assertContains(r, '<td class="num">2</td>', html=True)
 
+    def test_owned_only_counts_mine(self):
+        self.own(3, ct_blueprint_id=9001)
+        self.client.force_login(self.other)
+        r = self.client.get(self.url, {"owned": "1"})
+        self.assertNotContains(r, "Ugin, the Spirit Dragon")
+        r = self.client.get(self.url, {"q": "Ugin"})
+        self.assertContains(r, "Ugin, the Spirit Dragon")
+        self.assertNotContains(r, '<td class="num">3</td>', html=True)
+
     def test_no_criteria_lists_nothing(self):
         r = self.client.get(self.url, {"q": "  "})
         self.assertEqual(r.status_code, 200)

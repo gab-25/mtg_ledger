@@ -80,12 +80,12 @@ def suggested_price(card, foil):
     return price.trend_foil if foil else price.trend
 
 
-def owned_quantities():
-    """{blueprint ct_id: copies in the collection}, matching cards like blueprint_for()."""
-    from django.db.models import Sum
+def owned_quantities(owner):
+    """{blueprint ct_id: copies in owner's collection}, matching cards like blueprint_for()."""
+    from django.db.models import Q, Sum
 
     per_card = list(
-        Card.objects.annotate(qty=Sum("items__quantity")).filter(qty__gt=0)
+        Card.objects.annotate(qty=Sum("items__quantity", filter=Q(items__owner=owner))).filter(qty__gt=0)
         .values_list("ct_blueprint_id", "set_code", "collector_number", "qty")
     )
     known = set(Blueprint.objects.filter(ct_id__in=[c[0] for c in per_card if c[0]]).values_list("ct_id", flat=True))

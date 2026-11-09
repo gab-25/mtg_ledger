@@ -1,7 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -33,19 +34,29 @@ CONFLICTS = [
 
 
 class Command(BaseCommand):
-    help = "Load the demo collection shown in the design (wipes existing ledger data with --reset)."
+    help = "Load the demo collection shown in the design into a user's ledger (wipes it first with --reset)."
 
     def add_arguments(self, parser):
-        parser.add_argument("--reset", action="store_true", help="Delete all ledger data first")
+        parser.add_argument("--reset", action="store_true", help="Delete the user's ledger data first")
+        parser.add_argument("--user", help="Username to load the demo for (default: the first superuser)")
 
     @transaction.atomic
-    def handle(self, *args, reset=False, **options):
+    def handle(self, *args, reset=False, user=None, **options):
+        if user:
+            owner = get_user_model().objects.filter(username=user).first()
+            if owner is None:
+                raise CommandError(f"Unknown user '{user}'")
+        else:
+            owner = default_owner()
+            if owner is None:
+                raise CommandError("Create a superuser first, or pass --user.")
         if reset:
-            Card.objects.all().delete()
-            Order.objects.all().delete()
-            SyncLog.objects.all().delete()
+            CollectionItem.objects.owned_by(owner).delete()
+            Order.objects.owned_by(owner).delete()
+            SyncLog.objects.filter(owner=owner).delete()
+            Card.objects.filter(items__isnull=True).delete()
         now = timezone.now()
-        service = get_cardtrader(default_owner())
+        service = get_cardtrader(owner)
         service.last_sync = now - timedelta(days=1)
         service.save()
 
@@ -55,7 +66,7 @@ class Command(BaseCommand):
                 name=name, set_code=set_code, defaults={"type_line": type_line, "color": color}
             )
             item, _ = CollectionItem.objects.get_or_create(
-                card=card, condition=cond, language=lang, foil=False,
+                owner=owner, card=card, condition=cond, language=lang, foil=False,
                 defaults={"quantity": qty, "price": Decimal(price)},
             )
             items[name] = item
@@ -83,6 +94,7 @@ class Command(BaseCommand):
         for ct_id, code, state, ct0, buyer, addr, method, tracked, packing, lines in orders:
             name, street, zip_code, city, prov, country, cc = addr or ("", "", "", "", "", "", "")
             order, _ = Order.objects.update_or_create(ct_id=ct_id, defaults={
+                "owner": owner,
                 "code": code, "state": state, "via_cardtrader_zero": ct0, "buyer_username": buyer,
                 "ship_name": name, "ship_street": street, "ship_zip": zip_code, "ship_city": city,
                 "ship_province": prov, "ship_country": country, "ship_country_code": cc,
@@ -100,7 +112,7 @@ class Command(BaseCommand):
                     "price": Decimal(price), "condition": cond, "language": "EN",
                 })
 
-        if not SyncLog.objects.exists():
-            SyncLog.objects.create(message="CardTrader: 6 listings published")
-            SyncLog.objects.create(level=SyncLog.Level.WARNING, message="CardTrader: 3 prices differ from Ledger")
+        if not SyncLog.objects.filter(owner=owner).exists():
+            SyncLog.objects.create(owner=owner, message="CardTrader: 6 listings published")
+            SyncLog.objects.create(owner=owner, level=SyncLog.Level.WARNING, message="CardTrader: 3 prices differ from Ledger")
         self.stdout.write(self.style.SUCCESS(f"Seeded {len(items)} collection entries."))

@@ -193,8 +193,8 @@ def _choice(value, choices, default, field_name, line):
     return value
 
 
-def import_csv(uploaded_file):
-    """Create or update collection items from a CSV. Returns (created, updated)."""
+def import_csv(uploaded_file, owner):
+    """Create or update owner's collection items from a CSV. Returns (created, updated)."""
     try:
         text = uploaded_file.read().decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -228,6 +228,7 @@ def import_csv(uploaded_file):
                 color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
+                owner=owner,
                 card=card,
                 condition=_choice(row.get("condition"), Condition, Condition.NEAR_MINT, "condition", line),
                 language=_choice(row.get("language"), Language, Language.EN, "language", line),
@@ -242,7 +243,7 @@ def import_csv(uploaded_file):
                 item.save(update_fields=["quantity", "price", "updated_at"])
                 updated += 1
 
-        _log(f"CSV import: {created} new cards, {updated} quantities updated")
+        _log(f"CSV import: {created} new cards, {updated} quantities updated", owner=owner)
     return created, updated
 
 

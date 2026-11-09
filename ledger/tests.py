@@ -159,7 +159,7 @@ class LedgerTestCase(TestCase):
         User = get_user_model()
         self.user = User.objects.create_superuser("gab", password="pw")  # the admin: owns the demo data
         self.other = User.objects.create_user("ami", password="pw")
-        call_command("seed_demo", "--reset", stdout=StringIO())
+        call_command("seed_demo", "--reset", "--user", "gab", stdout=StringIO())
         self.client.force_login(self.user)
         self.ct = FakeCardTrader()
         patcher = mock.patch.object(services, "make_client", side_effect=self.ct.client)
@@ -228,6 +228,62 @@ class CsvTest(LedgerTestCase):
         resp = self.client.post(reverse("ledger:import_csv"), {"file": upload})
         self.assertContains(resp, "invalid condition")
         self.assertFalse(CollectionItem.objects.filter(card__name="Bolt").exists())
+
+
+class CollectionIsolationTest(LedgerTestCase):
+    """seed_demo gave the demo collection to self.user; self.other is a friend with nothing yet."""
+
+    def as_other(self):
+        self.client.force_login(self.other)
+
+    def test_friend_sees_empty_collection(self):
+        self.as_other()
+        resp = self.client.get(reverse("ledger:collection"))
+        self.assertFalse(resp.context["stats"]["total"])
+        self.assertEqual(resp.context["stats"]["unique"], 0)
+        self.assertEqual(resp.context["rows"], [])
+        self.assertEqual(list(resp.context["sets"]), [])
+        self.assertEqual(resp.context["pending_changes"], 0)
+        self.assertEqual(resp.context["orders_to_ship"], 0)
+        self.assertNotContains(resp, "Ragavan")
+
+    def test_item_of_other_user_is_404(self):
+        item = CollectionItem.objects.filter(owner=self.user).first()
+        self.as_other()
+        self.assertEqual(self.client.get(reverse("ledger:item_edit", args=[item.pk])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("ledger:item_delete", args=[item.pk])).status_code, 404)
+        self.assertTrue(CollectionItem.objects.filter(pk=item.pk).exists())
+
+    def test_csv_import_creates_own_item_for_same_printing(self):
+        mine = CollectionItem.objects.get(owner=self.user, card__name="Thoughtseize")
+        self.as_other()
+        upload = SimpleUploadedFile("c.csv", b"name,set,condition,language,quantity,price\nThoughtseize,2XM,NM,EN,7,9.00\n")
+        resp = self.client.post(reverse("ledger:import_csv"), {"file": upload})
+        self.assertRedirects(resp, reverse("ledger:collection"))
+        theirs = CollectionItem.objects.get(owner=self.other)
+        self.assertEqual((theirs.card_id, theirs.quantity), (mine.card_id, 7))
+        mine.refresh_from_db()
+        self.assertEqual(mine.quantity, 3)
+        self.assertTrue(SyncLog.objects.filter(owner=self.other, message__startswith="CSV import").exists())
+
+    def test_add_cards_form_creates_own_item(self):
+        self.as_other()
+        self.client.post(reverse("ledger:item_create"), {
+            "name": "Thoughtseize", "set_code": "2XM", "color": "B",
+            "condition": "NM", "language": "EN", "quantity": 1, "price": "12.00",
+        })
+        self.assertEqual(CollectionItem.objects.get(owner=self.other).card.name, "Thoughtseize")
+        self.assertEqual(CollectionItem.objects.get(owner=self.user, card__name="Thoughtseize").quantity, 3)
+
+    def test_export_contains_only_own_rows(self):
+        self.as_other()
+        self.client.post(reverse("ledger:item_create"), {
+            "name": "Lightning Bolt", "set_code": "M10", "color": "R",
+            "condition": "NM", "language": "EN", "quantity": 1, "price": "1.00",
+        })
+        csv_text = self.client.get(reverse("ledger:export_csv")).content.decode()
+        self.assertIn("Lightning Bolt", csv_text)
+        self.assertNotIn("Ragavan", csv_text)
 
 
 class ClientTest(TestCase):

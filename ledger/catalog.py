@@ -32,7 +32,7 @@ def merge_cards(source, target):
     pairs = []
     for item in source.items.select_related("listing"):
         twin = target.items.select_related("listing").filter(
-            condition=item.condition, language=item.language, foil=item.foil
+            owner_id=item.owner_id, condition=item.condition, language=item.language, foil=item.foil
         ).first()
         if twin is not None and live_listing(item) and live_listing(twin):
             return False

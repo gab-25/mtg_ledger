@@ -23,7 +23,7 @@ Connection settings come from environment variables (defaults match `compose.yam
 ```bash
 uv sync
 uv run python manage.py migrate
-uv run python manage.py seed_demo          # demo data from the design (--reset to wipe)
+uv run python manage.py seed_demo          # demo data from the design for the first superuser (--user NAME, --reset to wipe)
 uv run python manage.py createsuperuser
 uv run python manage.py runserver
 ```

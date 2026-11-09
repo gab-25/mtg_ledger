@@ -30,8 +30,10 @@ class CardItemForm(forms.ModelForm):
         model = CollectionItem
         fields = ["condition", "language", "foil", "quantity", "price"]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, owner=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if owner is not None and not self.instance.pk:
+            self.instance.owner = owner
         if self.instance.pk:
             card = self.instance.card
             self.initial.update(

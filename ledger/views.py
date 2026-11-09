@@ -47,11 +47,12 @@ def _safe_next(request, default):
 
 @login_required
 def collection(request):
-    items = CollectionItem.objects.select_related("card", "listing")
+    items = CollectionItem.objects.owned_by(request.user).select_related("card", "listing")
     stats = items.aggregate(total=Sum("quantity"), value=Sum(VALUE))
-    stats["unique"] = Card.objects.filter(items__isnull=False).distinct().count()
+    stats["unique"] = Card.objects.filter(items__owner=request.user).distinct().count()
     stats["for_sale"] = (
-        Listing.objects.exclude(status=Listing.Status.SOLD).aggregate(n=Sum("quantity"))["n"] or 0
+        Listing.objects.owned_by(request.user).exclude(status=Listing.Status.SOLD)
+        .aggregate(n=Sum("quantity"))["n"] or 0
     )
 
     q = request.GET.get("q", "").strip()
@@ -94,7 +95,7 @@ def collection(request):
         "foil_href": _query(request, foil=None if foil else "1"),
         "set_code": set_code,
         "cond": cond,
-        "sets": Card.objects.filter(items__isnull=False).values_list("set_code", flat=True).distinct().order_by("set_code"),
+        "sets": Card.objects.filter(items__owner=request.user).values_list("set_code", flat=True).distinct().order_by("set_code"),
         "conditions": Condition.choices,
         "color": color,
         "filtered": bool(q or color or foil or set_code or cond),
@@ -103,7 +104,7 @@ def collection(request):
 
 @login_required
 def item_create(request):
-    form = CardItemForm(request.POST or None)
+    form = CardItemForm(request.POST or None, owner=request.user)
     if request.method == "POST" and form.is_valid():
         item = form.save()
         messages.success(request, f"Added {item.quantity}× {item.card.name}.")
@@ -115,7 +116,7 @@ def item_create(request):
 
 @login_required
 def item_edit(request, pk):
-    item = get_object_or_404(CollectionItem.objects.select_related("card"), pk=pk)
+    item = get_object_or_404(CollectionItem.objects.owned_by(request.user).select_related("card"), pk=pk)
     form = CardItemForm(request.POST or None, instance=item)
     if request.method == "POST" and form.is_valid():
         form.save()
@@ -130,7 +131,7 @@ def item_edit(request, pk):
 @login_required
 @require_POST
 def item_delete(request, pk):
-    item = get_object_or_404(CollectionItem, pk=pk)
+    item = get_object_or_404(CollectionItem.objects.owned_by(request.user), pk=pk)
     name = item.card.name
     item.delete()
     messages.success(request, f"Removed {name} from the collection.")
@@ -142,7 +143,7 @@ def import_csv(request):
     form = CsvImportForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         try:
-            created, updated = services.import_csv(form.cleaned_data["file"])
+            created, updated = services.import_csv(form.cleaned_data["file"], request.user)
         except services.CsvImportError as exc:
             form.add_error("file", str(exc))
         else:
@@ -155,12 +156,12 @@ def import_csv(request):
 
 @login_required
 def export_csv(request):
-    items = CollectionItem.objects.all()
+    items = CollectionItem.objects.owned_by(request.user)
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     stamp = timezone.localdate().isoformat()
     response["Content-Disposition"] = f'attachment; filename="mtg-ledger-{stamp}.csv"'
     services.export_csv(items, response)
-    SyncLog.objects.create(message=f"CSV export: collection exported ({items.count():,} rows)")
+    SyncLog.objects.create(owner=request.user, message=f"CSV export: collection exported ({items.count():,} rows)")
     return response
 
 
@@ -196,7 +197,7 @@ def cards(request):
     owned = request.GET.get("owned") == "1"
     page = None
     if q or set_code or number or owned:
-        owned_qty = cardmarket.owned_quantities()
+        owned_qty = cardmarket.owned_quantities(request.user)
         printings = Blueprint.objects.select_related("expansion", "cm_price").order_by("name", "expansion__code")
         if q:
             printings = printings.filter(Q(name__icontains=q) | Q(expansion__code__iexact=q))

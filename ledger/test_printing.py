@@ -77,7 +77,7 @@ class ResolvePrintingTest(LedgerTestCase):
         legacy = Card.objects.get(name="Counterspell", set_code="DMR")  # demo: NM/IT x4 @0.80, listed
         printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
                                        ct_blueprint_id=1201)
-        CollectionItem.objects.create(card=printing, condition="NM", language="IT", quantity=2,
+        CollectionItem.objects.create(owner=self.user, card=printing, condition="NM", language="IT", quantity=2,
                                       price=Decimal("1.00"))
         self.assertEqual(self.resolve([legacy]), [])
         self.assertFalse(Card.objects.filter(pk=legacy.pk).exists())
@@ -90,7 +90,7 @@ class ResolvePrintingTest(LedgerTestCase):
         legacy = Card.objects.get(name="Counterspell", set_code="DMR")
         printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
                                        ct_blueprint_id=1201)
-        item = CollectionItem.objects.create(card=printing, condition="NM", language="IT", quantity=1)
+        item = CollectionItem.objects.create(owner=self.user, card=printing, condition="NM", language="IT", quantity=1)
         Listing.objects.create(item=item, quantity=1, price=Decimal("1.00"))
         self.assertFalse(merge_cards(legacy, printing))
         self.assertTrue(Card.objects.filter(pk=legacy.pk).exists())
