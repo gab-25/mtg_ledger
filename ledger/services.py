@@ -85,9 +85,14 @@ def openrouter_key():
     return getattr(settings, "OPENROUTER_API_KEY", "")
 
 
+def openrouter_model():
+    """The vision model, set by the server admin only, through OPENROUTER_MODEL (no default)."""
+    return getattr(settings, "OPENROUTER_MODEL", "")
+
+
 def make_openrouter():
     """Build the OpenRouter client. Tests patch this to inject a fake."""
-    return OpenRouterClient(openrouter_key(), model=settings.OPENROUTER_MODEL)
+    return OpenRouterClient(openrouter_key(), model=openrouter_model())
 
 
 def _log(message, level=SyncLog.Level.OK):

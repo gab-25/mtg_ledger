@@ -58,8 +58,8 @@ class ScanApiBase(LedgerTestCase):
         self.set_keys(openrouter="or-key", cardtrader="ct-token")
         self.client.defaults["HTTP_USER_AGENT"] = IPHONE
 
-    def set_keys(self, *, openrouter, cardtrader):
-        override = self.settings(OPENROUTER_API_KEY=openrouter)
+    def set_keys(self, *, openrouter, cardtrader, model="test/model"):
+        override = self.settings(OPENROUTER_API_KEY=openrouter, OPENROUTER_MODEL=model)
         override.enable()
         self.addCleanup(override.disable)
         service = services.get_cardtrader()
@@ -267,6 +267,16 @@ class MissingServicesTest(ScanApiBase):
         body = self.assertError(resp, 503, "service_missing")
         self.assertEqual(body["detail"], "Card recognition is not available right now — try again later")
         self.assertNotIn("help_url", body)
+        self.assertEqual((self.recognizer.calls, ScanLine.objects.count()), (0, 0))
+
+    def test_capture_without_openrouter_model_logs_it_on_the_server(self):
+        session = self.start()
+        self.set_keys(openrouter="or-key", cardtrader="ct-token", model="")
+        with self.assertLogs("ledger.api.scan", "WARNING") as logs:
+            resp = self.capture(session)
+        self.assertIn("OPENROUTER_MODEL", logs.output[0])
+        body = self.assertError(resp, 503, "service_missing")
+        self.assertEqual(body["detail"], "Card recognition is not available right now — try again later")
         self.assertEqual((self.recognizer.calls, ScanLine.objects.count()), (0, 0))
 
     def test_capture_without_cardtrader_token_says_so(self):

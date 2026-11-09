@@ -52,6 +52,8 @@ class OpenRouterClient:
     def __init__(self, key, *, model, base_url=BASE_URL, transport=None, timeout=20.0):
         if not key:
             raise OpenRouterError("OpenRouter API key is not configured.")
+        if not model:
+            raise OpenRouterError("OpenRouter model is not configured.")
         self.model = model
         self._http = httpx.Client(
             base_url=base_url,

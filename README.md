@@ -131,7 +131,8 @@ are created as *To publish*).
 - The Docker image downloads the latest release of the app at build time: to ship a new version of the scan app,
   publish a release in mtg_ledger_scan and rebuild.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
-  `OPENROUTER_MODEL` picks the vision model (default `qwen/qwen3.8-flash`).
+  `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
+  needs both.
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
 - The camera works on **smartphones only** (webcams can't focus on a card up close). A session started on a
   computer shows a **QR code** that opens the same session on the phone; Review, confirmation and search work on
@@ -155,7 +156,7 @@ real certificate that only your own devices can reach; mtg_ledger_scan's `npm ru
    With `DJANGO_BEHIND_HTTPS_PROXY` Django trusts `X-Forwarded-Proto` from Tailscale; plain `localhost` requests
    carry no such header and stay HTTP.
 3. Start the database (`docker compose up -d db`) and Django (`uv run python manage.py runserver`), with
-   `OPENROUTER_API_KEY` set for card recognition.
+   `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` set for card recognition.
 4. In mtg_ledger_scan run `npm run dev:phone`: it checks Tailscale and that Django accepts the tailnet name, then
    publishes the Vite dev server (the scan app with live reload, every other URL forwarded to Django) with
    `tailscale serve` and prints the `https://<pc>.<tailnet>.ts.net` address. Ctrl+C removes the Tailscale rule.

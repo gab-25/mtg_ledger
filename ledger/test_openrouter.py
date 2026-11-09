@@ -34,6 +34,10 @@ class RecognizeTest(SimpleTestCase):
         # Reading a card needs no reasoning: with it, reasoning models (e.g. Qwen) get slow and costly.
         self.assertEqual(seen["body"]["reasoning"], {"enabled": False})
 
+    def test_missing_model_raises(self):
+        with self.assertRaises(OpenRouterError):
+            OpenRouterClient("key", model="")
+
     def test_recognize_bad_content_raises(self):
         with self.assertRaises(OpenRouterError):
             self.client_for(lambda r: httpx.Response(200, json=completion("sorry"))).recognize_card(b"x")
