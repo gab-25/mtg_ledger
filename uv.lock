@@ -302,7 +302,7 @@ redis = [
 ]
 
 [[package]]
-name = "mtg-ledger"
+name = "mtg-ledger-core"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
