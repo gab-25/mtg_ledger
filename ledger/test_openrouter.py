@@ -31,6 +31,8 @@ class RecognizeTest(SimpleTestCase):
         self.assertEqual(seen["body"]["model"], "test/model")
         self.assertIn("image_url", json.dumps(seen["body"]))
         self.assertEqual(seen["auth"], "Bearer key")
+        # Reading a card needs no reasoning: with it, reasoning models (e.g. Qwen) get slow and costly.
+        self.assertEqual(seen["body"]["reasoning"], {"enabled": False})
 
     def test_recognize_bad_content_raises(self):
         with self.assertRaises(OpenRouterError):
