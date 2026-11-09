@@ -3,6 +3,9 @@
 #
 #   scripts/dev-phone.sh            # port 8000
 #   PORT=8001 scripts/dev-phone.sh
+#   SCAN_APP_DIR=../mtg_ledger_scan/dist scripts/dev-phone.sh   # after `npm run build` in mtg_ledger_scan
+#
+# The scan pages are the React app of gab-25/mtg_ledger_scan: SCAN_APP_DIR (default scan_app/) must hold its build.
 #
 # Needs: Tailscale running on this computer and on the phone (same account), MagicDNS and
 # HTTPS Certificates enabled in the Tailscale admin console, and the PostgreSQL started with
@@ -15,6 +18,13 @@ cd "$(dirname "$0")/.."
 PORT="${PORT:-8000}"
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# Relative paths are from the repository root (where this script runs Django).
+SCAN_APP_DIR="${SCAN_APP_DIR:-scan_app}"
+[[ -f "$SCAN_APP_DIR/index.html" ]] || die "the scan app is not built: no index.html in $SCAN_APP_DIR.
+  Build it in mtg_ledger_scan with 'npm run build', then run e.g.
+  SCAN_APP_DIR=../mtg_ledger_scan/dist scripts/dev-phone.sh"
+export SCAN_APP_DIR
 
 command -v tailscale >/dev/null || die "tailscale is not installed (https://tailscale.com/download)."
 command -v uv >/dev/null || die "uv is not installed."

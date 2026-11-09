@@ -222,3 +222,6 @@ staticfiles/
 
 # Superpowers design specs and plans (local only)
 docs/superpowers/
+
+# Built React scan app (Docker unpacks a release here; in development point SCAN_APP_DIR at a build)
+scan_app/

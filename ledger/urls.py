@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import scan_views, views
+from . import scan_api, views
 
 app_name = "ledger"
 
@@ -11,14 +11,21 @@ urlpatterns = [
     path("cards/<int:pk>/delete/", views.item_delete, name="item_delete"),
     path("cards/import/", views.import_csv, name="import_csv"),
     path("cards/export/", views.export_csv, name="export_csv"),
-    path("scan/", scan_views.scan_start, name="scan_start"),
-    path("scan/<uuid:uid>/", scan_views.scan_camera, name="scan_camera"),
-    path("scan/<uuid:uid>/capture/", scan_views.scan_capture, name="scan_capture"),
-    path("scan/<uuid:uid>/search/", scan_views.scan_search, name="scan_search"),
-    path("scan/<uuid:uid>/review/", scan_views.scan_review, name="scan_review"),
-    path("scan/lines/<uuid:uid>/", scan_views.scan_line_update, name="scan_line_update"),
-    path("scan/lines/<uuid:uid>/resolve/", scan_views.scan_resolve, name="scan_resolve"),
-    path("scan/lines/<uuid:uid>/frame.jpg", scan_views.scan_frame, name="scan_frame"),
+    path("scan/", scan_api.scan_app, name="scan_start"),
+    path("scan/<path:rest>", scan_api.scan_app, name="scan_app"),
+    path("api/scan/setup/", scan_api.setup, name="scan_api_setup"),
+    path("api/scan/sessions/", scan_api.sessions, name="scan_api_sessions"),
+    path("api/scan/sessions/<uuid:uid>/", scan_api.session_detail, name="scan_api_session"),
+    path("api/scan/sessions/<uuid:uid>/captures/", scan_api.captures, name="scan_api_captures"),
+    path("api/scan/sessions/<uuid:uid>/search/", scan_api.search, name="scan_api_search"),
+    path("api/scan/sessions/<uuid:uid>/manual/", scan_api.manual, name="scan_api_manual"),
+    path("api/scan/sessions/<uuid:uid>/review/", scan_api.review, name="scan_api_review"),
+    path("api/scan/sessions/<uuid:uid>/threshold/", scan_api.threshold, name="scan_api_threshold"),
+    path("api/scan/sessions/<uuid:uid>/save/", scan_api.save, name="scan_api_save"),
+    path("api/scan/lines/<uuid:uid>/", scan_api.line_detail, name="scan_api_line"),
+    path("api/scan/lines/<uuid:uid>/undo/", scan_api.line_undo, name="scan_api_undo"),
+    path("api/scan/lines/<uuid:uid>/confirm/", scan_api.line_confirm, name="scan_api_confirm"),
+    path("api/scan/lines/<uuid:uid>/frame.jpg", scan_api.line_frame, name="scan_api_frame"),
     path("sale/", views.sale, name="sale"),
     path("sale/<int:item_pk>/", views.listing_edit, name="listing_edit"),
     path("sale/<int:item_pk>/delete/", views.listing_delete, name="listing_delete"),

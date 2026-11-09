@@ -144,6 +144,12 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# The built React scan app (gab-25/mtg_ledger_scan): index.html is served for /scan/..., its assets under
+# /static/scan/ (the Vite build uses base "/static/scan/"). The Docker image unpacks a release here.
+SCAN_APP_DIR = Path(os.environ.get('SCAN_APP_DIR') or BASE_DIR / 'scan_app').resolve()
+if SCAN_APP_DIR.is_dir():
+    STATICFILES_DIRS = [('scan', SCAN_APP_DIR)]
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
