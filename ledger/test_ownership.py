@@ -8,10 +8,12 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase
+from django.urls import reverse
 
 from .models import (
     Card, CollectionItem, Listing, Order, OrderItem, ScanLine, ScanSession, SyncConflict, SyncLog, SyncService,
 )
+from .tests import LedgerTestCase
 
 AUTH = ("auth", "0012_alter_user_first_name_max_length")
 BEFORE = [("ledger", "0013_scanline_read_name"), AUTH]
@@ -116,3 +118,66 @@ class OwnedByTest(TestCase):
         shared = SyncLog.objects.create(message="global")
         visible = set(SyncLog.objects.visible_to(self.a))
         self.assertEqual(visible, {self.rows[self.a][SyncLog], shared})
+
+
+class OwnerIsolationSweepTest(LedgerTestCase):
+    """A friend reaching any of the admin's objects by id gets 404, on every URL that takes one."""
+
+    # URL name → how to find one of self.user's objects for its argument
+    TARGETS = {
+        "item_edit": lambda t: t.item.pk, "item_delete": lambda t: t.item.pk,
+        "listing_edit": lambda t: t.listing.item_id, "listing_delete": lambda t: t.listing.item_id,
+        "order_detail": lambda t: t.order.pk, "order_ship": lambda t: t.order.pk,
+        "resolve": lambda t: t.conflict.pk,
+        "scan_api_session": lambda t: t.session.uuid, "scan_api_captures": lambda t: t.session.uuid,
+        "scan_api_search": lambda t: t.session.uuid, "scan_api_manual": lambda t: t.session.uuid,
+        "scan_api_review": lambda t: t.session.uuid, "scan_api_threshold": lambda t: t.session.uuid,
+        "scan_api_save": lambda t: t.session.uuid,
+        "scan_api_line": lambda t: t.line.uuid, "scan_api_undo": lambda t: t.line.uuid,
+        "scan_api_confirm": lambda t: t.line.uuid, "scan_api_frame": lambda t: t.line.uuid,
+    }
+    NOT_OBJECTS = {"scan_app"}  # <path:rest> is a client-side route of the SPA, not an object
+
+    def setUp(self):
+        super().setUp()
+        self.item = CollectionItem.objects.owned_by(self.user).first()
+        self.listing = Listing.objects.owned_by(self.user).first()
+        self.order = Order.objects.owned_by(self.user).filter(state=Order.State.PAID).first()
+        self.conflict = SyncConflict.objects.owned_by(self.user).first()
+        self.session = ScanSession.objects.create(owner=self.user)
+        self.line = ScanLine.objects.create(session=self.session, condition="NM", frame=b"jpeg")
+        self.client.force_login(self.other)
+
+    def test_every_object_url_is_covered(self):
+        from .urls import urlpatterns
+
+        with_args = {p.name for p in urlpatterns if p.pattern.converters} - self.NOT_OBJECTS
+        self.assertEqual(with_args - set(self.TARGETS), set(), "new URL with an object id: add it to TARGETS")
+
+    def test_other_users_objects_are_404(self):
+        for name, target in self.TARGETS.items():
+            url = reverse(f"ledger:{name}", args=[target(self)])
+            for method in ("get", "post"):
+                with self.subTest(name=name, method=method):
+                    self.assertIn(getattr(self.client, method)(url).status_code, (404, 405))
+        # nothing changed
+        self.assertTrue(CollectionItem.objects.filter(pk=self.item.pk).exists())
+        self.assertEqual(self.session.lines.count(), 1)
+
+    def test_some_method_answers_404_for_each_url(self):
+        for name, target in self.TARGETS.items():
+            url = reverse(f"ledger:{name}", args=[target(self)])
+            statuses = {self.client.get(url).status_code, self.client.post(url).status_code,
+                        self.client.put(url).status_code, self.client.patch(url).status_code}
+            with self.subTest(name=name):
+                self.assertIn(404, statuses)
+
+    def test_list_pages_show_none_of_the_admins_cards(self):
+        names = list(CollectionItem.objects.owned_by(self.user).values_list("card__name", flat=True))
+        for name, params in (("collection", {}), ("sale", {}), ("cards", {"owned": "1"}), ("sync", {}),
+                             ("shipments", {})):
+            resp = self.client.get(reverse(f"ledger:{name}"), params)
+            with self.subTest(page=name):
+                self.assertEqual(resp.status_code, 200)
+                for card in names:
+                    self.assertNotContains(resp, card)

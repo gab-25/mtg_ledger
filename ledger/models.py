@@ -7,10 +7,8 @@ from django.db.models import Q
 
 
 def _owner(related_name):
-    """The user a personal row belongs to (nullable until every row has been assigned one)."""
-    return models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name=related_name,
-    )
+    """The user a personal row belongs to."""
+    return models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name=related_name)
 
 
 class OwnedQuerySet(models.QuerySet):
@@ -169,9 +167,7 @@ class Listing(models.Model):
 class SyncService(models.Model):
     """A user's connection to a service (CardTrader): their own API token and sync times."""
 
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="sync_services",
-    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sync_services")
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=200, blank=True)
     direction = models.CharField(max_length=120, blank=True)
@@ -182,6 +178,9 @@ class SyncService(models.Model):
     )
     last_sync = models.DateTimeField(null=True, blank=True)
     orders_synced_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "name"], name="unique_service_per_user")]
 
     def __str__(self):
         return self.name
@@ -219,7 +218,9 @@ class SyncLog(models.Model):
         OK = "ok", "OK"
         WARNING = "warn", "Warning"
 
-    owner = _owner("sync_logs")  # None: a global entry (the Cardmarket sync)
+    owner = models.ForeignKey(  # None: a global entry (the Cardmarket sync)
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="sync_logs",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     level = models.CharField(max_length=4, choices=Level.choices, default=Level.OK)
     message = models.CharField(max_length=300)

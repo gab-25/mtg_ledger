@@ -62,6 +62,16 @@ reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`
 Migrations never run on their own at container start: run `python manage.py migrate` yourself after each upgrade
 (e.g. `docker compose exec mtg_ledger python manage.py migrate`, or a one-off container of the image with that command).
 
+## Users
+
+Several people can share one Ledger, each with their own collection: every user sees and changes only their own
+cards, listings, orders, scan sessions, sync conflicts and log entries (another user's object answers 404). The card
+catalog and the prices are shared. The administrator creates the accounts in the Django admin (`/admin/`); there is no
+sign-up page.
+
+Upgrading a single-user Ledger: the existing data goes to the first superuser, so create one before `migrate` if there
+is none (the migration stops with a message otherwise).
+
 ## CardTrader
 
 Every user connects their own CardTrader token from **Profile and settings → Connected services** (the token is checked

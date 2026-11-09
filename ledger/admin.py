@@ -12,10 +12,11 @@ class CardAdmin(admin.ModelAdmin):
 
 @admin.register(CollectionItem)
 class CollectionItemAdmin(admin.ModelAdmin):
-    list_display = ["card", "condition", "language", "foil", "quantity", "price"]
-    list_filter = ["condition", "language", "foil"]
+    list_display = ["card", "owner", "condition", "language", "foil", "quantity", "price"]
+    list_filter = ["owner", "condition", "language", "foil"]
     search_fields = ["card__name"]
     autocomplete_fields = ["card"]
+    raw_id_fields = ["owner"]
 
 
 @admin.register(Listing)
@@ -26,7 +27,9 @@ class ListingAdmin(admin.ModelAdmin):
 
 @admin.register(SyncService)
 class SyncServiceAdmin(admin.ModelAdmin):
-    list_display = ["name", "direction", "last_sync"]
+    list_display = ["name", "user", "ct_user_id", "last_sync"]
+    list_filter = ["user"]
+    raw_id_fields = ["user"]
 
 
 @admin.register(SyncConflict)
@@ -37,8 +40,9 @@ class SyncConflictAdmin(admin.ModelAdmin):
 
 @admin.register(SyncLog)
 class SyncLogAdmin(admin.ModelAdmin):
-    list_display = ["created_at", "level", "message"]
-    list_filter = ["level"]
+    list_display = ["created_at", "owner", "level", "message"]
+    list_filter = ["level", "owner"]
+    raw_id_fields = ["owner"]
 
 
 class OrderItemInline(admin.TabularInline):
@@ -49,8 +53,9 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ["code", "state", "buyer_username", "ship_country_code", "size", "total", "paid_at", "sent_at"]
-    list_filter = ["state", "via_cardtrader_zero"]
+    list_display = ["code", "owner", "state", "buyer_username", "ship_country_code", "size", "total", "paid_at", "sent_at"]
+    list_filter = ["owner", "state", "via_cardtrader_zero"]
+    raw_id_fields = ["owner"]
     search_fields = ["code", "buyer_username", "ship_name"]
     inlines = [OrderItemInline]
     readonly_fields = ["raw"]

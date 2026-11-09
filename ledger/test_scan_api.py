@@ -520,7 +520,7 @@ class LineTest(ScanApiBase):
 class ProtocolTest(ScanApiBase):
     def test_403_without_login(self):
         self.client.logout()
-        session = ScanSession.objects.create()
+        session = ScanSession.objects.create(owner=self.user)
         for resp in (self.call("get", "scan_api_setup"),
                      self.call("post", "scan_api_sessions", data={}),
                      self.call("get", "scan_api_review", session.uuid),
