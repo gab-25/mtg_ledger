@@ -130,7 +130,7 @@ class OwnerIsolationSweepTest(LedgerTestCase):
         "api_listing": lambda t: t.listing.item_id,
         "order_detail": lambda t: t.order.pk, "order_ship": lambda t: t.order.pk,
         "api_order": lambda t: t.order.pk, "api_order_ship": lambda t: t.order.pk,
-        "resolve": lambda t: t.conflict.pk,
+        "resolve": lambda t: t.conflict.pk, "api_resolve": lambda t: t.conflict.pk,
         "scan_api_session": lambda t: t.session.uuid, "scan_api_captures": lambda t: t.session.uuid,
         "scan_api_search": lambda t: t.session.uuid, "scan_api_manual": lambda t: t.session.uuid,
         "scan_api_review": lambda t: t.session.uuid, "scan_api_threshold": lambda t: t.session.uuid,

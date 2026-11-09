@@ -612,6 +612,10 @@ class MarketTest(LedgerTestCase):
 
 
 class SyncTest(LedgerTestCase):
+    def resolve(self, conflict, keep):
+        return self.client.post(reverse("ledger:api_resolve", args=[conflict.pk]), {"keep": keep},
+                                content_type="application/json")
+
     def test_sync_detects_remote_differences(self):
         SyncConflict.objects.all().delete()
         self.publish()
@@ -619,13 +623,15 @@ class SyncTest(LedgerTestCase):
         self.ct.products[counterspell.ct_product_id]["price_cents"] = 70
         fable = Listing.objects.get(item__card__name="Fable of the Mirror-Breaker")
         del self.ct.products[fable.ct_product_id]
-        self.client.post(reverse("ledger:sync_all"))
+        resp = self.client.post(reverse("ledger:api_sync_run"))
+        self.assertEqual(resp.json()["messages"], [{"level": "success", "text": "Sync complete: 2 conflicts to resolve."}])
         conflicts = {c.item.card.name: c for c in SyncConflict.objects.filter(resolution="open")}
         self.assertEqual(set(conflicts), {"Counterspell", "Fable of the Mirror-Breaker"})
         self.assertEqual(conflicts["Counterspell"].remote_amount, Decimal("0.70"))
         # A second sync does not duplicate conflicts, and fixed ones disappear.
         self.ct.products[counterspell.ct_product_id]["price_cents"] = 80
-        self.client.post(reverse("ledger:sync_all"))
+        resp = self.client.post(reverse("ledger:api_sync_run"))
+        self.assertEqual(resp.json()["messages"][0]["text"], "Sync complete: 1 conflict to resolve.")
         self.assertEqual(
             list(SyncConflict.objects.filter(resolution="open").values_list("item__card__name", flat=True)),
             ["Fable of the Mirror-Breaker"],
@@ -633,7 +639,8 @@ class SyncTest(LedgerTestCase):
 
     def test_keep_remote_price(self):
         conflict = SyncConflict.objects.get(field="price")
-        self.client.post(reverse("ledger:resolve", args=[conflict.pk]), {"keep": "remote"})
+        resp = self.resolve(conflict, "remote")
+        self.assertEqual(resp.json()["messages"][0]["text"], f"Conflict on {conflict.item.card.name} resolved.")
         conflict.refresh_from_db()
         self.assertEqual(conflict.resolution, "remote")
         self.assertEqual(conflict.item.listing.price, Decimal("0.70"))
@@ -643,17 +650,37 @@ class SyncTest(LedgerTestCase):
         listing = conflict.item.listing
         listing.ct_product_id = 42
         listing.save()
-        self.client.post(reverse("ledger:resolve", args=[conflict.pk]), {"keep": "ledger"})
+        self.resolve(conflict, "ledger")
         listing.refresh_from_db()
         self.assertEqual(listing.status, Listing.Status.TO_PUBLISH)
         self.assertIsNone(listing.ct_product_id)
 
+    def test_resolve_needs_a_choice(self):
+        conflict = SyncConflict.objects.get(field="price")
+        resp = self.resolve(conflict, "")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["detail"], "Choose which source to keep.")
+        conflict.refresh_from_db()
+        self.assertEqual(conflict.resolution, "open")
+
+    def test_sync_failure(self):
+        with mock.patch.object(services, "sync_all", side_effect=CardTraderError("down")):
+            resp = self.client.post(reverse("ledger:api_sync_run"))
+        self.assertEqual((resp.status_code, resp.json()["detail"]), (502, "Sync failed: down"))
+
     def test_sync_page(self):
-        resp = self.client.get(reverse("ledger:sync"))
-        self.assertEqual(len(resp.context["conflicts"]), 3)
-        self.assertContains(resp, "Configured")
+        data = self.client.get(reverse("ledger:api_sync")).json()
+        self.assertEqual(len(data["conflicts"]), 3)
+        self.assertEqual(set(data["conflicts"][0]), {"id", "name", "set_code", "condition", "language", "service",
+                                                      "local_value", "remote_value"})
+        self.assertEqual(data["pending_changes"], 3)
+        [ct] = data["connections"]
+        self.assertEqual((ct["name"], ct["token_ok"], ct["open_conflicts"]), ("CardTrader", True, 3))
+        self.assertLessEqual(len(data["log"]), 20)
+        self.assertEqual(set(data["log"][0]), {"created_at", "level", "level_label", "message"})
         self.client.force_login(self.other)
-        self.assertContains(self.client.get(reverse("ledger:sync")), "Not configured")
+        [ct] = self.client.get(reverse("ledger:api_sync")).json()["connections"]
+        self.assertFalse(ct["token_ok"])
 
 
 class ShipmentsTest(LedgerTestCase):
@@ -787,19 +814,18 @@ class SellingIsolationTest(LedgerTestCase):
         service.api_token, service.ct_user_id = "friend-token", 78
         service.save()
 
-    def messages(self, resp):
-        return [str(m) for m in resp.wsgi_request._messages]
-
     def test_friend_without_token_cannot_sell(self):
         self.friend_listing()
         order = Order.objects.create(owner=self.other, ct_id=99, code="c99", state=Order.State.PAID)
         self.client.force_login(self.other)
         self.ct.calls.clear()
-        for name, args in (("publish", []), ("sync_all", []), ("orders_sync", []), ("match_prices", []),
-                           ("order_ship", [order.pk])):
+        for name, args in (("api_publish", []), ("api_sync_run", []), ("api_orders_import", []),
+                           ("api_match_prices", []), ("api_order_ship", [order.pk])):
             with self.subTest(name=name):
-                resp = self.client.post(reverse(f"ledger:{name}", args=args), {"tracking_code": "X"}, follow=True)
-                self.assertTrue(any(CONNECT in m for m in self.messages(resp)), self.messages(resp))
+                resp = self.client.post(reverse(f"ledger:{name}", args=args), {"tracking_code": "X"},
+                                        content_type="application/json")
+                self.assertEqual(resp.status_code, 502)
+                self.assertIn(CONNECT, resp.json()["detail"])
         self.assertEqual(self.ct.calls, [])
 
     def test_publish_only_pushes_own_listings(self):
@@ -842,20 +868,22 @@ class SellingIsolationTest(LedgerTestCase):
         order = Order.objects.owned_by(self.user).filter(state=Order.State.PAID).first()
         self.client.force_login(self.other)
         for method, name, args in (
-            ("get", "listing_edit", [listing.item.pk]), ("post", "listing_delete", [listing.item.pk]),
-            ("post", "resolve", [conflict.pk]), ("get", "order_detail", [order.pk]),
-            ("post", "order_ship", [order.pk]),
+            ("get", "api_listing", [listing.item.pk]), ("delete", "api_listing", [listing.item.pk]),
+            ("post", "api_resolve", [conflict.pk]), ("get", "api_order", [order.pk]),
+            ("post", "api_order_ship", [order.pk]),
         ):
-            with self.subTest(name=name):
-                resp = getattr(self.client, method)(reverse(f"ledger:{name}", args=args), {"keep": "remote"})
+            with self.subTest(name=name, method=method):
+                resp = getattr(self.client, method)(reverse(f"ledger:{name}", args=args), {"keep": "remote"},
+                                                    content_type="application/json")
                 self.assertEqual(resp.status_code, 404)
 
     def test_friend_pages_show_only_their_data(self):
         SyncLog.objects.create(message="Global note")
         self.client.force_login(self.other)
-        resp = self.client.get(reverse("ledger:sync"))
-        self.assertContains(resp, "Global note")
-        self.assertNotContains(resp, "6 listings published")
-        self.assertEqual(len(resp.context["conflicts"]), 0)
-        self.assertEqual(self.client.get(reverse("ledger:sale")).context["stats"]["active"], 0)
-        self.assertEqual(self.client.get(reverse("ledger:shipments")).context["rows"], [])
+        data = self.client.get(reverse("ledger:api_sync")).json()
+        log = [l["message"] for l in data["log"]]
+        self.assertIn("Global note", log)
+        self.assertFalse(any("6 listings published" in m for m in log))
+        self.assertEqual(data["conflicts"], [])
+        self.assertEqual(self.client.get(reverse("ledger:api_listings")).json()["stats"]["active"], 0)
+        self.assertEqual(self.client.get(reverse("ledger:api_orders")).json()["results"], [])
