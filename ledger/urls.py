@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 from .api import cards as cards_api
 from .api import collection as collection_api
+from .api import orders as orders_api
 from .api import sale as sale_api
 from .api import scan as scan_api
 
@@ -27,6 +28,10 @@ urlpatterns = [
     path("api/listings/match-prices/", sale_api.match_prices, name="api_match_prices"),
     path("api/listings/<int:item_pk>/", sale_api.listing, name="api_listing"),
     path("api/cards/", cards_api.cards, name="api_cards"),
+    path("api/orders/", orders_api.orders, name="api_orders"),
+    path("api/orders/import/", orders_api.import_orders, name="api_orders_import"),
+    path("api/orders/<int:pk>/", orders_api.order, name="api_order"),
+    path("api/orders/<int:pk>/ship/", orders_api.ship, name="api_order_ship"),
     path("api/scan/setup/", scan_api.setup, name="scan_api_setup"),
     path("api/scan/sessions/", scan_api.sessions, name="scan_api_sessions"),
     path("api/scan/sessions/<uuid:uid>/", scan_api.session_detail, name="scan_api_session"),

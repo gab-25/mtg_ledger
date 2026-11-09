@@ -666,11 +666,17 @@ class ShipmentsTest(LedgerTestCase):
         self.ragavan.save()
 
     def import_orders(self):
-        return self.client.post(reverse("ledger:orders_sync"))
+        return self.client.post(reverse("ledger:api_orders_import"))
+
+    def ship(self, order, tracking_code, save_tracking=False):
+        return self.client.post(reverse("ledger:api_order_ship", args=[order.pk]),
+                                {"tracking_code": tracking_code, "save_tracking": save_tracking},
+                                content_type="application/json")
 
     def test_import_orders_decrements_stock_once(self):
         self.ct.orders = [order_payload(1, "paid", [(self.sheoldred.ct_product_id, "Sheoldred", 1)])]
-        self.import_orders()
+        resp = self.import_orders()
+        self.assertEqual(resp.json()["messages"], [{"level": "success", "text": "Orders imported: 1 new, 0 updated."}])
         self.import_orders()  # idempotent
         self.sheoldred.refresh_from_db()
         self.assertEqual(self.sheoldred.quantity, 1)
@@ -703,10 +709,12 @@ class ShipmentsTest(LedgerTestCase):
         self.ct.orders = [order_payload(5, "paid", [(777, "Ragavan", 1)], tracked=True)]
         self.import_orders()
         order = Order.objects.get(ct_id=5)
-        resp = self.client.post(reverse("ledger:order_ship", args=[order.pk]), {"tracking_code": ""}, follow=True)
-        self.assertContains(resp, "need a tracking code")
-        resp = self.client.post(reverse("ledger:order_ship", args=[order.pk]), {"tracking_code": "RR1IT"})
-        self.assertRedirects(resp, reverse("ledger:shipments"))
+        resp = self.ship(order, "")
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("need a tracking code", resp.json()["detail"])
+        resp = self.ship(order, "RR1IT")
+        self.assertEqual(resp.json(), {"shipped": True, "messages": [
+            {"level": "success", "text": f"Order #{order.code} marked as shipped."}]})
         order.refresh_from_db()
         self.assertEqual(order.state, Order.State.SENT)
         self.assertEqual(order.tracking_code, "RR1IT")
@@ -715,19 +723,51 @@ class ShipmentsTest(LedgerTestCase):
 
     def test_cannot_ship_twice(self):
         order = Order.objects.get(state="sent")
-        resp = self.client.post(reverse("ledger:order_ship", args=[order.pk]), {"tracking_code": "X"}, follow=True)
-        self.assertContains(resp, "cannot be shipped")
+        resp = self.ship(order, "X")
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json(), {"detail": f"Order #{order.code} is shipped: it cannot be shipped.",
+                                       "code": "blocked"})
+
+    def test_save_tracking_only(self):
+        self.ct.orders = [order_payload(6, "paid", [(777, "Ragavan", 1)])]
+        self.import_orders()
+        order = Order.objects.get(ct_id=6)
+        resp = self.ship(order, "RR2IT", save_tracking=True)
+        self.assertEqual(resp.json(), {"shipped": False, "messages": [
+            {"level": "success", "text": "Tracking code saved on CardTrader."}]})
+        order.refresh_from_db()
+        self.assertEqual((order.state, order.tracking_code), (Order.State.PAID, "RR2IT"))
+
+    def test_invalid_tracking_code(self):
+        order = Order.objects.filter(state="paid").first()
+        resp = self.ship(order, "X" * 200)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["detail"], "Invalid tracking code.")
 
     def test_shipments_tabs(self):
-        resp = self.client.get(reverse("ledger:shipments"))
-        self.assertEqual(len(resp.context["rows"]), 2)
-        self.assertEqual(resp.context["stats"]["items_to_ship"], 3)
-        resp = self.client.get(reverse("ledger:shipments"), {"tab": "ct_zero"})
-        self.assertEqual([r["o"].state for r in resp.context["rows"]], ["hub_pending"])
-        order = Order.objects.filter(state="paid").first()
-        resp = self.client.get(reverse("ledger:order_detail", args=[order.pk]))
-        self.assertContains(resp, "Mark as shipped")
-        self.assertContains(resp, "Packing list")
+        data = self.client.get(reverse("ledger:api_orders")).json()
+        self.assertEqual(data["tab"], "to_ship")
+        self.assertEqual(len(data["results"]), 2)
+        self.assertEqual(data["stats"]["items_to_ship"], 3)
+        self.assertEqual([t["key"] for t in data["tabs"]], ["to_ship", "ct_zero", "shipped", "completed", "issues"])
+        self.assertEqual(data["tabs"][0], {"key": "to_ship", "label": "To ship", "count": 2})
+        packing = [r["packing_number"] for r in data["results"]]
+        self.assertEqual(packing, sorted(packing, key=lambda n: (n is None, n)))
+        data = self.client.get(reverse("ledger:api_orders"), {"tab": "ct_zero"}).json()
+        self.assertEqual([r["badge"]["label"] for r in data["results"]], ["CT Zero pending"])
+        self.assertEqual(self.client.get(reverse("ledger:api_orders"), {"tab": "nope"}).json()["tab"], "to_ship")
+
+    def test_order_detail(self):
+        self.ct.orders = [order_payload(1, "paid", [(self.sheoldred.ct_product_id, "Sheoldred", 1)])]
+        self.import_orders()
+        order = Order.objects.get(ct_id=1)
+        data = self.client.get(reverse("ledger:api_order", args=[order.pk])).json()
+        self.assertEqual(data["address_lines"], ["Ada", "Via Po 1", "10100 Torino TO", "Italy"])
+        self.assertTrue(data["can_ship"])
+        self.assertEqual((data["state"], data["state_label"]), ("paid", "To ship"))
+        [line] = data["items"]
+        self.assertEqual((line["name"], line["item_pk"]), ("Sheoldred", self.sheoldred.item_id))
+        self.assertEqual(data["total"], "12.34")
 
 
 CONNECT = "Connect your CardTrader token in Profile and settings to sell."
