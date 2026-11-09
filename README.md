@@ -117,6 +117,11 @@ are created as *To publish*).
   MTG Ledger serves its `index.html` for every `/scan/...` URL (login required) and its assets under
   `/static/scan/`; the app talks to the JSON API under `/api/scan/` with the Django session and the `csrftoken`
   cookie (sent back as `X-CSRFToken`). All the scan logic stays here.
+- The API is built with Django REST Framework (`ledger/api/`). Its OpenAPI schema is at `/api/schema/` and the
+  interactive docs at `/api/docs/` (both need login); `uv run python manage.py spectacular --file schema.yaml`
+  writes the schema, e.g. to generate the TypeScript types of the scan app. Errors use DRF's format:
+  `{"field": ["message"]}` for validation (400), otherwise `{"detail", "code", "help_url"?}`, with `code` such as
+  `not_authenticated` (403), `not_found`, `closed` (409: the session was already saved) or `service_missing` (503).
 - `SCAN_APP_DIR` is the folder with the built app (default `scan_app/` in the project, gitignored). Without an
   `index.html` there, `/scan/` answers *Scan app not built*. In development build the app and point at it:
   ```bash

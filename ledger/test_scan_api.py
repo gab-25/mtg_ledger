@@ -1,14 +1,17 @@
 import json
 import tempfile
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 
 from . import catalog, services
+from .api.serializers import MAX_FRAME_BYTES
 from .cardtrader import CardTraderError
 from .models import CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
 from .openrouter import OpenRouterError
@@ -80,10 +83,20 @@ class ScanApiBase(LedgerTestCase):
                                 {"frame": frame, "capture_id": capture_id})
 
     def assertError(self, resp, status, code):
+        """A non-validation error: {"detail", "code", "help_url"?}."""
         self.assertEqual(resp.status_code, status, resp.content)
         body = resp.json()
         self.assertEqual(body["code"], code)
-        self.assertIsInstance(body["error"], str)
+        self.assertIsInstance(body["detail"], str)
+        return body
+
+    def assertInvalid(self, resp, *fields):
+        """A validation error: 400 with the messages of exactly these fields."""
+        self.assertEqual(resp.status_code, 400, resp.content)
+        body = resp.json()
+        self.assertEqual(sorted(body), sorted(fields))
+        for messages in body.values():
+            self.assertTrue(messages and all(isinstance(m, str) for m in messages), body)
         return body
 
 
@@ -121,8 +134,17 @@ class SetupAndSessionTest(ScanApiBase):
         self.assertEqual(resp.status_code, 201)
         self.assertIsNone(resp.json()["session"]["expansion"])
 
-    def test_start_unknown_expansion_404(self):
-        self.assertError(self.call("post", "scan_api_sessions", data={"expansion_id": 999999}), 404, "not_found")
+    def test_start_unknown_expansion_is_invalid(self):
+        self.assertInvalid(self.call("post", "scan_api_sessions", data={"expansion_id": 999999}), "expansion_id")
+
+    def test_start_unknown_condition_is_invalid(self):
+        self.assertInvalid(self.call("post", "scan_api_sessions", data={"condition": "XX"}), "condition")
+
+    def test_start_defaults_to_all_expansions_near_mint(self):
+        resp = self.call("post", "scan_api_sessions", data={})
+        self.assertEqual(resp.status_code, 201)
+        session = ScanSession.objects.get(uuid=resp.json()["session"]["uuid"])
+        self.assertEqual((session.expansion, session.default_condition), (None, "NM"))
 
     def test_session_detail_shows_last_added_line(self):
         session = self.start()
@@ -198,8 +220,8 @@ class CaptureTest(ScanApiBase):
         session = self.start()
         self.recognizer.error = OpenRouterError("OpenRouter failed (429): rate limited")
         body = self.assertError(self.capture(session), 502, "service_error")
-        self.assertIn("rate limited", body["error"])
-        self.assertIn("take the photo again", body["error"])
+        self.assertIn("rate limited", body["detail"])
+        self.assertIn("take the photo again", body["detail"])
         self.assertEqual(ScanLine.objects.count(), 0)
 
     def test_photo_without_a_card_adds_nothing(self):
@@ -211,10 +233,21 @@ class CaptureTest(ScanApiBase):
         self.assertEqual(ScanLine.objects.count(), 0)
         self.assertFalse(ScanCapture.objects.filter(capture_id="empty").exists())
 
-    def test_missing_or_oversized_photo(self):
+    def test_missing_photo(self):
         session = self.start()
         resp = self.client.post(reverse("ledger:scan_api_captures", args=[session.uuid]), {"capture_id": "x"})
-        self.assertError(resp, 400, "invalid")
+        self.assertInvalid(resp, "frame")
+
+    def test_oversized_photo(self):
+        session = self.start()
+        frame = SimpleUploadedFile("f.jpg", b"\xff" * (MAX_FRAME_BYTES + 1), content_type="image/jpeg")
+        resp = self.client.post(reverse("ledger:scan_api_captures", args=[session.uuid]), {"frame": frame})
+        self.assertInvalid(resp, "frame")
+        self.assertEqual(self.recognizer.calls, 0)
+
+    def test_capture_needs_multipart(self):
+        session = self.start()
+        self.assertError(self.call("post", "scan_api_captures", session.uuid, data={}), 415, "unsupported_media_type")
 
     def test_capture_on_closed_session_409(self):
         session = self.start()
@@ -228,11 +261,11 @@ class MissingServicesTest(ScanApiBase):
     def test_capture_without_openrouter_key_logs_it_on_the_server(self):
         session = self.start()
         self.set_keys(openrouter="", cardtrader="ct-token")
-        with self.assertLogs("ledger.scan_api", "WARNING") as logs:
+        with self.assertLogs("ledger.api.scan", "WARNING") as logs:
             resp = self.capture(session)
         self.assertIn("OPENROUTER_API_KEY", logs.output[0])
         body = self.assertError(resp, 503, "service_missing")
-        self.assertEqual(body["error"], "Card recognition is not available right now — try again later")
+        self.assertEqual(body["detail"], "Card recognition is not available right now — try again later")
         self.assertNotIn("help_url", body)
         self.assertEqual((self.recognizer.calls, ScanLine.objects.count()), (0, 0))
 
@@ -240,7 +273,7 @@ class MissingServicesTest(ScanApiBase):
         session = self.start()
         self.set_keys(openrouter="or-key", cardtrader="")
         body = self.assertError(self.capture(session), 503, "service_missing")
-        self.assertIn("CardTrader is not connected", body["error"])
+        self.assertIn("CardTrader is not connected", body["detail"])
         self.assertEqual(body["help_url"], reverse("accounts:profile") + "#cardtrader")
         self.assertEqual(self.recognizer.calls, 0)
 
@@ -249,7 +282,7 @@ class MissingServicesTest(ScanApiBase):
         Expansion.objects.all().delete()
         no_token = CardTraderError("CardTrader API token is not configured.")
         with mock.patch.object(services, "make_client", side_effect=no_token), \
-                self.assertNoLogs("ledger.scan_api", "WARNING"):
+                self.assertNoLogs("ledger.api.scan", "WARNING"):
             body = self.call("get", "scan_api_setup").json()
         self.assertEqual(body["warnings"], [])
         self.assertEqual(len(body["missing"]), 1)
@@ -283,9 +316,11 @@ class ConfirmTest(ScanApiBase):
     def test_confirm_needs_card_and_language(self):
         session = self.start()
         line = self.uncertain(session)["line"]
-        body = self.assertError(self.call("post", "scan_api_confirm", line["uuid"], data={"blueprint_id": 1201}),
-                                400, "invalid")
-        self.assertEqual(body["error"], "Pick a card and its language.")
+        self.assertInvalid(self.call("post", "scan_api_confirm", line["uuid"], data={"blueprint_id": 1201}),
+                           "language")
+        self.assertInvalid(self.call("post", "scan_api_confirm", line["uuid"], data={"blueprint_id": 999999,
+                                                                                     "language": "IT"}),
+                           "blueprint_id")
 
     def test_confirmed_line_is_returned_unchanged(self):
         session = self.start()
@@ -297,7 +332,7 @@ class ConfirmTest(ScanApiBase):
         session = self.start()
         self.uncertain(session)
         body = self.assertError(self.call("post", "scan_api_save", session.uuid), 409, "blocked")
-        self.assertEqual(body["error"], "Some cards still need confirmation.")
+        self.assertEqual(body["detail"], "Some cards still need confirmation.")
         review = self.call("get", "scan_api_review", session.uuid).json()
         self.assertEqual((len(review["pending"]), len(review["lines"])), (1, 0))
 
@@ -315,8 +350,8 @@ class SearchTest(ScanApiBase):
 
     def test_manual_needs_card_and_language(self):
         session = self.start()
-        self.assertError(self.call("post", "scan_api_manual", session.uuid, data={"blueprint_id": 1201}),
-                         400, "invalid")
+        self.assertInvalid(self.call("post", "scan_api_manual", session.uuid, data={"blueprint_id": 1201}),
+                           "language")
 
     def test_search_other_expansion_loads_it(self):
         session = self.start()  # DMR locked
@@ -380,9 +415,9 @@ class ReviewTest(ScanApiBase):
 
     def test_threshold_must_be_a_price(self):
         session = self.start()
-        body = self.assertError(self.call("put", "scan_api_threshold", session.uuid, data={"threshold": "abc"}),
-                                400, "invalid")
-        self.assertEqual(body["error"], "Enter the threshold as a price, e.g. 2.50.")
+        body = self.assertInvalid(self.call("put", "scan_api_threshold", session.uuid, data={"threshold": "abc"}),
+                                  "threshold")
+        self.assertEqual(body["threshold"], ["Enter the threshold as a price, e.g. 2.50."])
 
     def test_closed_session_rejects_changes(self):
         session = self.start()
@@ -420,12 +455,16 @@ class LineTest(ScanApiBase):
         self.assertEqual(self.patch({"quantity": 0}).json(), {"line": None, "count": 0})
 
     def test_patch_validation(self):
-        for data in ({"foil": "1"}, {"condition": "XX"}, {"language": "KL"}, {"quantity": -1},
-                     {"quantity": "2"}, {"quantity": True}, {"for_sale": "yes"}, {"price": "1"}, {}, ["foil"]):
+        for data, fields in (({"foil": "maybe"}, ["foil"]), ({"condition": "XX"}, ["condition"]),
+                             ({"language": "KL"}, ["language"]), ({"quantity": -1}, ["quantity"]),
+                             ({"quantity": "two"}, ["quantity"]), ({"quantity": True}, ["quantity"]),
+                             ({"for_sale": "maybe"}, ["for_sale"]), ({"price": "1"}, ["price"]),
+                             ({"foil": True, "price": "1"}, ["price"]), ({}, ["non_field_errors"]),
+                             (["foil"], ["non_field_errors"])):
             with self.subTest(data=data):
-                self.assertError(self.patch(data), 400, "invalid")
+                self.assertInvalid(self.patch(data), *fields)
         self.assertError(self.client.patch(reverse("ledger:scan_api_line", args=[self.line["uuid"]]), "{",
-                                           content_type="application/json"), 400, "invalid")
+                                           content_type="application/json"), 400, "parse_error")
         line = ScanLine.objects.get(uuid=self.line["uuid"])
         self.assertEqual((line.foil, line.condition, line.quantity), (False, "NM", 1))
 
@@ -438,19 +477,20 @@ class LineTest(ScanApiBase):
 
 
 class ProtocolTest(ScanApiBase):
-    def test_401_without_login(self):
+    def test_403_without_login(self):
         self.client.logout()
         session = ScanSession.objects.create()
         for resp in (self.call("get", "scan_api_setup"),
                      self.call("post", "scan_api_sessions", data={}),
-                     self.call("get", "scan_api_review", session.uuid)):
-            self.assertError(resp, 401, "login")
+                     self.call("get", "scan_api_review", session.uuid),
+                     self.client.get(reverse("ledger:scan_api_frame", args=[session.uuid]))):
+            self.assertError(resp, 403, "not_authenticated")
 
     def test_403_without_csrf(self):
         client = Client(enforce_csrf_checks=True)
         client.force_login(self.user)
         resp = client.post(reverse("ledger:scan_api_sessions"), "{}", content_type="application/json")
-        self.assertEqual(resp.status_code, 403)
+        self.assertError(resp, 403, "permission_denied")
         client.get(reverse("ledger:scan_start"))
         token = client.cookies["csrftoken"].value
         resp = client.post(reverse("ledger:scan_api_sessions"), "{}", content_type="application/json",
@@ -460,15 +500,36 @@ class ProtocolTest(ScanApiBase):
     def test_405_on_wrong_method(self):
         session = self.start()
         resp = self.call("get", "scan_api_sessions")
-        self.assertError(resp, 405, "invalid")
-        self.assertEqual(resp["Allow"], "POST")
-        self.assertError(self.call("post", "scan_api_review", session.uuid), 405, "invalid")
-        self.assertError(self.call("post", "scan_api_threshold", session.uuid, data={}), 405, "invalid")
+        self.assertError(resp, 405, "method_not_allowed")
+        self.assertEqual(set(resp["Allow"].split(", ")), {"POST", "OPTIONS"})
+        self.assertError(self.call("post", "scan_api_review", session.uuid), 405, "method_not_allowed")
+        self.assertError(self.call("post", "scan_api_threshold", session.uuid, data={}), 405, "method_not_allowed")
 
     def test_decimals_are_strings(self):
         session = self.start()
         line = self.capture(session).json()["line"]
         self.assertEqual(line["price"], "5.00")
+
+
+class SchemaTest(LedgerTestCase):
+    def test_schema_describes_the_scan_api(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        self.assertEqual(resp.status_code, 200)
+        schema = json.loads(resp.content)
+        self.assertIn("/api/scan/sessions/{uid}/captures/", schema["paths"])
+        self.assertIn("Line", schema["components"]["schemas"])
+
+    def test_schema_generates_without_warnings(self):
+        out, err = StringIO(), StringIO()
+        call_command("spectacular", "--validate", "--fail-on-warn", stdout=out, stderr=err)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_docs_need_login(self):
+        self.assertContains(self.client.get(reverse("api_docs")), "swagger")
+        self.client.logout()
+        self.assertEqual(self.client.get(reverse("api_schema")).status_code, 403)
+        resp = self.client.get(reverse("api_docs"))
+        self.assertRedirects(resp, f"{reverse('login')}?next=/api/docs/", fetch_redirect_response=False)
 
 
 class ScanAppTest(LedgerTestCase):

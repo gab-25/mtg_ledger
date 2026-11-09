@@ -1,6 +1,7 @@
 from django.urls import path
 
-from . import scan_api, views
+from . import views
+from .api import scan as scan_api
 
 app_name = "ledger"
 
@@ -11,8 +12,8 @@ urlpatterns = [
     path("cards/<int:pk>/delete/", views.item_delete, name="item_delete"),
     path("cards/import/", views.import_csv, name="import_csv"),
     path("cards/export/", views.export_csv, name="export_csv"),
-    path("scan/", scan_api.scan_app, name="scan_start"),
-    path("scan/<path:rest>", scan_api.scan_app, name="scan_app"),
+    path("scan/", views.scan_app, name="scan_start"),
+    path("scan/<path:rest>", views.scan_app, name="scan_app"),
     path("api/scan/setup/", scan_api.setup, name="scan_api_setup"),
     path("api/scan/sessions/", scan_api.sessions, name="scan_api_sessions"),
     path("api/scan/sessions/<uuid:uid>/", scan_api.session_detail, name="scan_api_session"),
