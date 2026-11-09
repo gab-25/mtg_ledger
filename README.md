@@ -1,4 +1,4 @@
-# mtg_ledger
+# mtg_ledger_core
 MTG Ledger — Magic: The Gathering collection and CardTrader sales manager (Django).
 
 ## Structure
@@ -31,7 +31,7 @@ Tests: `uv run python manage.py test`
 
 ## Docker
 
-The image is published to `ghcr.io/gab-25/mtg_ledger` only when a GitHub release is published (`.github/workflows/release.yml`, after the tests pass). Tests run on every PR and push to `main` (`.github/workflows/tests.yml`).
+The image is published to `ghcr.io/gab-25/mtg_ledger_core` only when a GitHub release is published (`.github/workflows/release.yml`, after the tests pass). Tests run on every PR and push to `main` (`.github/workflows/tests.yml`).
 
 Run the whole stack (PostgreSQL + app built from the local `Dockerfile`) with Docker Compose:
 
@@ -51,7 +51,7 @@ docker run -p 8000:8000 \
   -e POSTGRES_HOST=db.example.com -e POSTGRES_PASSWORD=... \
   -e DJANGO_SECRET_KEY=... -e DJANGO_ALLOWED_HOSTS=ledger.example.com \
   -e DJANGO_CSRF_TRUSTED_ORIGINS=https://ledger.example.com \
-  ghcr.io/gab-25/mtg_ledger:latest
+  ghcr.io/gab-25/mtg_ledger_core:latest
 ```
 
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
@@ -128,7 +128,7 @@ Uncertain cards ask you to pick among candidates; **Review** shows the draft (du
 "list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
 are created as *To publish*).
 
-- The scan screens are a React single-page app, [mtg_ledger_scan](https://github.com/gab-25/mtg_ledger_scan).
+- The scan screens are a React single-page app, [mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui).
   MTG Ledger serves its `index.html` for every `/scan/...` URL (login required) and its assets under
   `/static/scan/`; the app talks to the JSON API under `/api/scan/` with the Django session and the `csrftoken`
   cookie (sent back as `X-CSRFToken`). All the scan logic stays here.
@@ -140,11 +140,11 @@ are created as *To publish*).
 - `SCAN_APP_DIR` is the folder with the built app (default `scan_app/` in the project, gitignored). Without an
   `index.html` there, `/scan/` answers *Scan app not built*. In development build the app and point at it:
   ```bash
-  (cd ../mtg_ledger_scan && npm run build)
-  SCAN_APP_DIR=../mtg_ledger_scan/dist uv run python manage.py runserver
+  (cd ../mtg_ledger_ui && npm run build)
+  SCAN_APP_DIR=../mtg_ledger_ui/dist uv run python manage.py runserver
   ```
 - The Docker image downloads the latest release of the app at build time: to ship a new version of the scan app,
-  publish a release in mtg_ledger_scan and rebuild.
+  publish a release in mtg_ledger_ui and rebuild.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
   needs both.
@@ -157,7 +157,7 @@ are created as *To publish*).
 ### Trying it from your phone in development (Tailscale)
 
 The camera needs HTTPS. [Tailscale](https://tailscale.com) gives the development server an HTTPS address with a
-real certificate that only your own devices can reach; mtg_ledger_scan's `npm run dev:phone` publishes it.
+real certificate that only your own devices can reach; mtg_ledger_ui's `npm run dev:phone` publishes it.
 
 1. Install Tailscale on the computer and on the phone, signed in with the same account, and keep it connected on
    the phone while testing. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**. If
@@ -172,14 +172,14 @@ real certificate that only your own devices can reach; mtg_ledger_scan's `npm ru
    carry no such header and stay HTTP.
 3. Start the database (`docker compose up -d db`) and Django (`uv run python manage.py runserver`), with
    `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` set for card recognition.
-4. In mtg_ledger_scan run `npm run dev:phone`: it checks Tailscale and that Django accepts the tailnet name, then
+4. In mtg_ledger_ui run `npm run dev:phone`: it checks Tailscale and that Django accepts the tailnet name, then
    publishes the Vite dev server (the scan app with live reload, every other URL forwarded to Django) with
    `tailscale serve` and prints the `https://<pc>.<tailnet>.ts.net` address. Ctrl+C removes the Tailscale rule.
 5. Open that address on the computer, connect CardTrader in **Profile and settings**, start a session in
    **Scan cards** and scan the QR code with the phone.
 
 To try the production setup instead (Django serving the built app, as in the Docker image), build it with
-`npm run build` in mtg_ledger_scan, start Django with `SCAN_APP_DIR` pointing at its `dist/` and expose port 8000
+`npm run build` in mtg_ledger_ui, start Django with `SCAN_APP_DIR` pointing at its `dist/` and expose port 8000
 with `tailscale serve --https=443 8000`.
 
 If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.

@@ -1,7 +1,7 @@
 services:
   mtg_ledger:
     build: .
-    image: ghcr.io/gab-25/mtg_ledger:local
+    image: ghcr.io/gab-25/mtg_ledger_core:local
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mtg_ledger}
       POSTGRES_USER: ${POSTGRES_USER:-mtg_ledger}
@@ -27,7 +27,7 @@ services:
 
   worker:
     build: .
-    image: ghcr.io/gab-25/mtg_ledger:local
+    image: ghcr.io/gab-25/mtg_ledger_core:local
     command: celery -A config worker --loglevel=info --concurrency=1
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mtg_ledger}
