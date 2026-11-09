@@ -30,10 +30,12 @@ logger = logging.getLogger(__name__)
 
 def _openrouter_configured():
     """OpenRouter is a server setting: when it is missing, say so in the server console, not to the user."""
-    if services.openrouter_key():
-        return True
-    logger.warning("OpenRouter is not configured: card recognition needs the OPENROUTER_API_KEY environment variable.")
-    return False
+    missing = [name for name, value in (("OPENROUTER_API_KEY", services.openrouter_key()),
+                                        ("OPENROUTER_MODEL", services.openrouter_model())) if not value]
+    if missing:
+        logger.warning("OpenRouter is not configured: card recognition needs the %s environment variable%s.",
+                       " and ".join(missing), "s" if len(missing) > 1 else "")
+    return not missing
 
 
 def _missing_services():

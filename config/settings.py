@@ -204,7 +204,7 @@ CARDTRADER_API_TOKEN = os.environ.get('CARDTRADER_API_TOKEN', '')
 
 # Card recognition from the camera (vision model on OpenRouter)
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
-OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'qwen/qwen3.8-flash')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', '')
 
 # Celery (the Cardmarket sync runs on a worker; scheduling is external, no beat)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
