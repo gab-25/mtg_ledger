@@ -140,39 +140,33 @@ are created as *To publish*).
 
 ### Trying it from your phone in development (Tailscale)
 
-[Tailscale](https://tailscale.com) gives the development server an HTTPS address with a real certificate that only
-your own devices can reach.
+The camera needs HTTPS. [Tailscale](https://tailscale.com) gives the development server an HTTPS address with a
+real certificate that only your own devices can reach; mtg_ledger_scan's `npm run dev:phone` publishes it.
 
 1. Install Tailscale on the computer and on the phone, signed in with the same account, and keep it connected on
-   the phone while testing.
-2. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**.
-
-Then start the database (`docker compose up -d db`), build the scan app and run `scripts/dev-phone.sh` (options:
-`PORT`, default 8000; `SCAN_APP_DIR`, default `scan_app/`, e.g. `SCAN_APP_DIR=../mtg_ledger_scan/dist`).
-It checks the scan app build, Tailscale and the database connection, sets the Django host/CSRF/proxy variables, publishes the server
-with `tailscale serve` and removes that rule on Ctrl+C. It never runs migrations: if some are missing it stops
-and asks you to run `uv run python manage.py migrate`. If `tailscale serve` is refused, allow your user once with
-`sudo tailscale set --operator=$USER`.
-
-The same steps by hand:
-
-3. Expose the development server on the tailnet:
-   ```bash
-   tailscale serve --https=443 8000
+   the phone while testing. In the Tailscale admin console enable **MagicDNS** and **HTTPS Certificates**. If
+   `tailscale serve` is refused, allow your user once with `sudo tailscale set --operator=$USER`.
+2. Allow the tailnet name of this computer (`<pc>.<tailnet>.ts.net`, shown by `tailscale status`) in `.env`:
    ```
-   It prints the address, e.g. `https://my-pc.my-tailnet.ts.net`.
-4. Start Django on that port, trusting the Tailscale proxy:
-   ```bash
-   export DJANGO_ALLOWED_HOSTS=.ts.net,localhost
-   export DJANGO_CSRF_TRUSTED_ORIGINS=https://*.ts.net
-   export DJANGO_BEHIND_HTTPS_PROXY=true
-   export SCAN_APP_DIR=../mtg_ledger_scan/dist
-   uv run python manage.py runserver 8000
+   DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,<pc>.<tailnet>.ts.net
+   DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000,https://<pc>.<tailnet>.ts.net
+   DJANGO_BEHIND_HTTPS_PROXY=true
    ```
-5. With `OPENROUTER_API_KEY` set, open the `ts.net` address on the computer, connect CardTrader in **Profile and settings**, start a
-   session in **Scan cards** and scan the QR code with the phone.
+   With `DJANGO_BEHIND_HTTPS_PROXY` Django trusts `X-Forwarded-Proto` from Tailscale; plain `localhost` requests
+   carry no such header and stay HTTP.
+3. Start the database (`docker compose up -d db`) and Django (`uv run python manage.py runserver`), with
+   `OPENROUTER_API_KEY` set for card recognition.
+4. In mtg_ledger_scan run `npm run dev:phone`: it checks Tailscale and that Django accepts the tailnet name, then
+   publishes the Vite dev server (the scan app with live reload, every other URL forwarded to Django) with
+   `tailscale serve` and prints the `https://<pc>.<tailnet>.ts.net` address. Ctrl+C removes the Tailscale rule.
+5. Open that address on the computer, connect CardTrader in **Profile and settings**, start a session in
+   **Scan cards** and scan the QR code with the phone.
 
-If the QR page still says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.
+To try the production setup instead (Django serving the built app, as in the Docker image), build it with
+`npm run build` in mtg_ledger_scan, start Django with `SCAN_APP_DIR` pointing at its `dist/` and expose port 8000
+with `tailscale serve --https=443 8000`.
+
+If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.
 
 ## CSV
 
