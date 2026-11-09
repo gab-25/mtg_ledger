@@ -125,7 +125,7 @@ class OwnerIsolationSweepTest(LedgerTestCase):
 
     # URL name → how to find one of self.user's objects for its argument
     TARGETS = {
-        "item_edit": lambda t: t.item.pk, "item_delete": lambda t: t.item.pk,
+        "item_edit": lambda t: t.item.pk, "item_delete": lambda t: t.item.pk, "api_item": lambda t: t.item.pk,
         "listing_edit": lambda t: t.listing.item_id, "listing_delete": lambda t: t.listing.item_id,
         "order_detail": lambda t: t.order.pk, "order_ship": lambda t: t.order.pk,
         "resolve": lambda t: t.conflict.pk,

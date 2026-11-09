@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .api import collection as collection_api
 from .api import scan as scan_api
 
 app_name = "ledger"
@@ -14,6 +15,11 @@ urlpatterns = [
     path("cards/export/", views.export_csv, name="export_csv"),
     path("scan/", views.scan_app, name="scan_start"),
     path("scan/<path:rest>", views.scan_app, name="scan_app"),
+    path("api/choices/", collection_api.choices, name="api_choices"),
+    path("api/collection/", collection_api.collection, name="api_collection"),
+    path("api/collection/<int:pk>/", collection_api.item, name="api_item"),
+    path("api/collection/import/", collection_api.import_csv, name="api_import"),
+    path("api/collection/export/", collection_api.export_csv, name="api_export"),
     path("api/scan/setup/", scan_api.setup, name="scan_api_setup"),
     path("api/scan/sessions/", scan_api.sessions, name="scan_api_sessions"),
     path("api/scan/sessions/<uuid:uid>/", scan_api.session_detail, name="scan_api_session"),
