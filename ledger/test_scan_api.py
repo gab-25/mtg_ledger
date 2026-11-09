@@ -62,7 +62,7 @@ class ScanApiBase(LedgerTestCase):
         override = self.settings(OPENROUTER_API_KEY=openrouter, OPENROUTER_MODEL=model)
         override.enable()
         self.addCleanup(override.disable)
-        service = services.get_cardtrader()
+        service = services.get_cardtrader(self.user)
         service.api_token = cardtrader
         service.save()
 
@@ -287,6 +287,25 @@ class MissingServicesTest(ScanApiBase):
         self.assertEqual(body["help_url"], reverse("accounts:profile") + "#cardtrader")
         self.assertEqual(self.recognizer.calls, 0)
 
+    def test_friend_scans_with_admin_token(self):
+        self.client.force_login(self.other)  # no CardTrader token of their own
+        self.assertEqual(self.call("get", "scan_api_setup").json()["missing"], [])
+        session = self.start()
+        self.assertEqual(self.capture(session).json()["result"], "added")
+
+    def test_capture_without_service_token_tells_friend_to_ask_admin(self):
+        self.client.force_login(self.other)
+        session = self.start()
+        self.set_keys(openrouter="or-key", cardtrader="")
+        body = self.assertError(self.capture(session), 503, "service_missing")
+        self.assertIn("ask the administrator to connect CardTrader", body["detail"])
+        self.assertNotIn("help_url", body)
+        self.assertEqual(self.recognizer.calls, 0)
+
+    def test_session_start_does_not_call_info(self):
+        self.start()
+        self.assertNotIn(("GET", "/info"), self.ct.calls)
+
     def test_setup_lists_missing_services(self):
         self.set_keys(openrouter="", cardtrader="")
         Expansion.objects.all().delete()
@@ -501,7 +520,7 @@ class LineTest(ScanApiBase):
 class ProtocolTest(ScanApiBase):
     def test_403_without_login(self):
         self.client.logout()
-        session = ScanSession.objects.create()
+        session = ScanSession.objects.create(owner=self.user)
         for resp in (self.call("get", "scan_api_setup"),
                      self.call("post", "scan_api_sessions", data={}),
                      self.call("get", "scan_api_review", session.uuid),
@@ -588,3 +607,47 @@ class ScanAppTest(LedgerTestCase):
     def test_collection_links_to_scan(self):
         self.assertContains(self.client.get(reverse("ledger:collection")), reverse("ledger:scan_start"))
         self.assertEqual(reverse("ledger:scan_start"), "/scan/")
+
+
+class ScanIsolationTest(ScanApiBase):
+    """Another user's sessions and lines answer 404, as if they did not exist."""
+
+    def test_other_users_session_and_lines_are_404(self):
+        session = self.start()
+        self.recognizer.result = Recognition(name="Counterspell", language="")
+        line = ScanLine.objects.get(uuid=self.capture(session).json()["line"]["uuid"])
+        self.client.force_login(self.other)
+        frame = SimpleUploadedFile("f.jpg", b"\xff\xd8jpeg", content_type="image/jpeg")
+        session_calls = [
+            ("get", "scan_api_session", None), ("get", "scan_api_review", None),
+            ("get", "scan_api_search", None), ("post", "scan_api_manual", {}),
+            ("put", "scan_api_threshold", {"threshold": "1.00"}), ("post", "scan_api_save", None),
+        ]
+        for method, name, data in session_calls:
+            with self.subTest(name=name):
+                self.assertError(self.call(method, name, session.uuid, data=data), 404, "not_found")
+        with self.subTest(name="scan_api_captures"):
+            resp = self.client.post(reverse("ledger:scan_api_captures", args=[session.uuid]),
+                                    {"frame": frame, "capture_id": "x"})
+            self.assertError(resp, 404, "not_found")
+        line_calls = [
+            ("patch", "scan_api_line", {"quantity": 3}), ("post", "scan_api_undo", None),
+            ("post", "scan_api_confirm", {}),
+        ]
+        for method, name, data in line_calls:
+            with self.subTest(name=name):
+                self.assertError(self.call(method, name, line.uuid, data=data), 404, "not_found")
+        with self.subTest(name="scan_api_frame"):
+            self.assertEqual(self.client.get(reverse("ledger:scan_api_frame", args=[line.uuid])).status_code, 404)
+        line.refresh_from_db()
+        self.assertEqual(line.quantity, 1)
+        self.assertEqual(self.recognizer.calls, 1)
+
+    def test_setup_defaults_come_from_own_last_session(self):
+        self.start(condition="LP")
+        self.client.force_login(self.other)
+        self.assertEqual(self.call("get", "scan_api_setup").json()["defaults"]["condition"], "NM")
+
+    def test_new_session_belongs_to_the_user(self):
+        self.client.force_login(self.other)
+        self.assertEqual(self.start().owner, self.other)

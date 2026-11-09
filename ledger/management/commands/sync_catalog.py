@@ -12,7 +12,7 @@ class Command(BaseCommand):
         parser.add_argument("--all", action="store_true", help="Reload the blueprints of every expansion")
 
     def handle(self, *args, set_code=None, all=False, **options):
-        with services.make_client() as client:
+        with services.service_client() as client:
             count = catalog.sync_expansions(client)
             self.stdout.write(f"{count} expansions")
             if set_code:

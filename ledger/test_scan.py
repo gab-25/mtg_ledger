@@ -2,7 +2,7 @@ from decimal import Decimal
 from unittest import mock
 
 from . import catalog, scan
-from .models import Blueprint, Card, CollectionItem, Expansion, Listing, ScanLine
+from .models import Blueprint, Card, CollectionItem, Expansion, Listing, ScanLine, SyncLog
 from .recognition import Match, Recognition
 from .tests import LedgerTestCase
 
@@ -20,7 +20,7 @@ class ScanTestCase(LedgerTestCase):
         patcher = mock.patch("ledger.pricing.price_for", side_effect=lambda *a, **k: self.price)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.session = scan.start_session(self.dmr, "NM")
+        self.session = scan.start_session(self.user, self.dmr, "NM")
 
     def capture(self, capture_id, *, language="IT", foil=False, certain=True):
         rec = Recognition(name="Counterspell", language=language, foil=foil)
@@ -92,7 +92,8 @@ class ThresholdTest(ScanTestCase):
     def test_threshold_remembered(self):
         self.session.sale_threshold = Decimal("3.00")
         self.session.save()
-        self.assertEqual(scan.start_session(None, "EX").sale_threshold, Decimal("3.00"))
+        self.assertEqual(scan.start_session(self.user, None, "EX").sale_threshold, Decimal("3.00"))
+        self.assertIsNone(scan.start_session(self.other, None, "EX").sale_threshold)  # not another user's
 
 
 class SaveTest(ScanTestCase):
@@ -103,7 +104,7 @@ class SaveTest(ScanTestCase):
 
     def printing(self, *, quantity=1, price="9.00", listing_status=None):
         card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=1201)
-        item = CollectionItem.objects.create(card=card, condition="NM", language="IT", quantity=quantity,
+        item = CollectionItem.objects.create(owner=self.user, card=card, condition="NM", language="IT", quantity=quantity,
                                              price=Decimal(price))
         if listing_status:
             Listing.objects.create(item=item, quantity=1, price=Decimal("9.00"), status=listing_status)
@@ -116,6 +117,18 @@ class SaveTest(ScanTestCase):
         item = CollectionItem.objects.get(card__ct_blueprint_id=1201)
         self.assertEqual((item.card.collector_number, item.price, item.quantity), ("45", Decimal("5.00"), 1))
         self.assertEqual((item.listing.status, item.listing.price), (Listing.Status.TO_PUBLISH, Decimal("5.00")))
+
+    def test_save_adds_to_own_item_for_same_printing(self):
+        mine = self.printing(quantity=2)
+        friend_session = scan.start_session(self.other, self.dmr, "NM")
+        rec = Recognition(name="Counterspell", language="IT")
+        scan.add_capture(friend_session, self.api, rec, Match(self.bolt, [self.bolt], "ok"), frame=b"jpeg", capture_id="f")
+        scan.save_session(friend_session)
+        theirs = CollectionItem.objects.get(owner=self.other)
+        self.assertEqual((theirs.card_id, theirs.quantity), (mine.card_id, 1))
+        mine.refresh_from_db()
+        self.assertEqual(mine.quantity, 2)
+        self.assertTrue(SyncLog.objects.filter(owner=self.other, message__startswith="Camera scan").exists())
 
     def test_save_keeps_existing_price(self):
         item = self.printing()

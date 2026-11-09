@@ -1,8 +1,33 @@
 import uuid
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
+
+
+def _owner(related_name):
+    """The user a personal row belongs to."""
+    return models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name=related_name)
+
+
+class OwnedQuerySet(models.QuerySet):
+    """Rows belonging to one user; owner_path is the lookup from the model to its owner."""
+
+    owner_path = "owner"
+
+    def owned_by(self, user):
+        return self.filter(**{self.owner_path: user})
+
+
+def owned_manager(path):
+    return type(f"OwnedBy{path.title().replace('__', '')}QuerySet", (OwnedQuerySet,), {"owner_path": path}).as_manager()
+
+
+class SyncLogQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        """The user's own entries plus the global ones (no owner, e.g. the Cardmarket sync)."""
+        return self.filter(Q(owner=user) | Q(owner__isnull=True))
 
 
 class Color(models.TextChoices):
@@ -79,6 +104,7 @@ class CollectionItem(models.Model):
         FOR_SALE = "sale", "For sale"
         PENDING = "pending", "Sync pending"
 
+    owner = _owner("collection_items")
     card = models.ForeignKey(Card, on_delete=models.CASCADE, related_name="items")
     condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
     language = models.CharField(max_length=3, choices=Language.choices, default=Language.EN)
@@ -89,6 +115,8 @@ class CollectionItem(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = owned_manager("owner")
 
     class Meta:
         ordering = ["card__name", "card__set_code"]
@@ -127,6 +155,8 @@ class Listing(models.Model):
     sold_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = owned_manager("item__owner")
+
     class Meta:
         ordering = ["item__card__name"]
 
@@ -135,12 +165,22 @@ class Listing(models.Model):
 
 
 class SyncService(models.Model):
-    name = models.CharField(max_length=80, unique=True)
+    """A user's connection to a service (CardTrader): their own API token and sync times."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sync_services")
+    name = models.CharField(max_length=80)
     description = models.CharField(max_length=200, blank=True)
     direction = models.CharField(max_length=120, blank=True)
     api_token = models.TextField(blank=True)  # CardTrader tokens are long JWTs
+    ct_user_id = models.PositiveBigIntegerField(
+        "CardTrader user", null=True, blank=True, unique=True,
+        help_text="The CardTrader account behind the token: one app user per account",
+    )
     last_sync = models.DateTimeField(null=True, blank=True)
     orders_synced_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "name"], name="unique_service_per_user")]
 
     def __str__(self):
         return self.name
@@ -164,6 +204,8 @@ class SyncConflict(models.Model):
     resolution = models.CharField(max_length=8, choices=Resolution.choices, default=Resolution.OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = owned_manager("item__owner")
+
     class Meta:
         ordering = ["created_at"]
 
@@ -176,9 +218,14 @@ class SyncLog(models.Model):
         OK = "ok", "OK"
         WARNING = "warn", "Warning"
 
+    owner = models.ForeignKey(  # None: a global entry (the Cardmarket sync)
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="sync_logs",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     level = models.CharField(max_length=4, choices=Level.choices, default=Level.OK)
     message = models.CharField(max_length=300)
+
+    objects = SyncLogQuerySet.as_manager()
 
     class Meta:
         ordering = ["-created_at", "-id"]
@@ -201,6 +248,7 @@ class Order(models.Model):
         LOST = "lost", "Lost"
         CLOSED = "closed", "Merged (CT Zero)"
 
+    owner = _owner("orders")
     ct_id = models.PositiveBigIntegerField(unique=True)
     code = models.CharField(max_length=40)
     state = models.CharField(max_length=24, default=State.PAID)
@@ -232,6 +280,8 @@ class Order(models.Model):
     )
     raw = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = owned_manager("owner")
 
     class Meta:
         ordering = ["-paid_at", "-ct_id"]
@@ -268,6 +318,8 @@ class OrderItem(models.Model):
     condition = models.CharField(max_length=40, blank=True)
     language = models.CharField(max_length=10, blank=True)
     foil = models.BooleanField(default=False)
+
+    objects = owned_manager("order__owner")
 
     class Meta:
         ordering = ["name"]
@@ -366,6 +418,7 @@ class ScanSession(models.Model):
         OPEN = "open", "Open"
         SAVED = "saved", "Saved"
 
+    owner = _owner("scan_sessions")
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     expansion = models.ForeignKey(Expansion, null=True, blank=True, on_delete=models.SET_NULL)
     default_condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
@@ -373,6 +426,8 @@ class ScanSession(models.Model):
     status = models.CharField(max_length=5, choices=Status.choices, default=Status.OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = owned_manager("owner")
 
     class Meta:
         ordering = ["-created_at"]
@@ -401,6 +456,8 @@ class ScanLine(models.Model):
     color = models.CharField(max_length=1, choices=Color.choices, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = owned_manager("session__owner")
 
     class Meta:
         ordering = ["-updated_at", "-id"]

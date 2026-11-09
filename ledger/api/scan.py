@@ -38,13 +38,19 @@ def _openrouter_configured():
     return not missing
 
 
-def _missing_services():
-    """Connections the user must set up in the profile before scanning: [(message, profile link)]."""
-    profile = reverse("accounts:profile")
+def _missing_services(user):
+    """Connections to set up before scanning: [(message, profile link or "")].
+
+    The catalog and prices come with the administrator's CardTrader token: only an administrator can fix it.
+    """
     missing = []
-    if not services.api_token():
-        missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
-                        f"{profile}#cardtrader"))
+    if not services.service_token():
+        if user.is_superuser:
+            missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
+                            reverse("accounts:profile") + "#cardtrader"))
+        else:
+            missing.append(("Card catalog and prices are unavailable: ask the administrator to connect CardTrader.",
+                            ""))
     return missing
 
 
@@ -57,7 +63,7 @@ def _search_expansion(code, session, warnings):
         expansion = catalog.expansion_by_code(code)
         if expansion is not None:
             try:
-                with services.make_client() as client:
+                with services.service_client() as client:
                     catalog.ensure_blueprints(client, expansion)
             except CardTraderError as exc:
                 warnings.append(f"Could not load {expansion}: {exc}")
@@ -83,15 +89,18 @@ def _validated(serializer_class, data, **kwargs):
     return serializer.validated_data
 
 
-def _get_session(uid, *, open_only=True):
-    session = get_object_or_404(ScanSession.objects.select_related("expansion"), uuid=uid)
+def _get_session(user, uid, *, open_only=True):
+    """The user's session (another user's answers 404, like a missing one)."""
+    session = get_object_or_404(ScanSession.objects.owned_by(user).select_related("expansion"), uuid=uid)
     if open_only and session.status != ScanSession.Status.OPEN:
         raise Closed()
     return session
 
 
-def _get_line(uid):
-    line = get_object_or_404(ScanLine.objects.select_related("session__expansion", "blueprint__expansion"), uuid=uid)
+def _get_line(user, uid):
+    line = get_object_or_404(
+        ScanLine.objects.owned_by(user).select_related("session__expansion", "blueprint__expansion"), uuid=uid,
+    )
     if line.session.status != ScanSession.Status.OPEN:
         raise Closed()
     return line
@@ -108,13 +117,13 @@ def _line_result(line, session):
 @api_view(["GET"])
 def setup(request):
     warnings = []
-    if not Expansion.objects.exists() and services.api_token():
+    if not Expansion.objects.exists() and services.service_token():
         try:
-            with services.make_client() as client:
+            with services.service_client() as client:
                 catalog.sync_expansions(client)
         except CardTraderError as exc:
             warnings.append(f"Could not load the expansions from CardTrader: {exc}")
-    last = ScanSession.objects.order_by("-created_at", "-id").first()
+    last = ScanSession.objects.owned_by(request.user).order_by("-created_at", "-id").first()
     return Response(s.SetupSerializer({
         "expansions": Expansion.objects.all(),
         "conditions": _choices(Condition.choices),
@@ -123,7 +132,7 @@ def setup(request):
             "expansion_id": last.expansion_id if last else None,
             "condition": last.default_condition if last else Condition.NEAR_MINT,
         },
-        "missing": [{"message": message, "url": url} for message, url in _missing_services()],
+        "missing": [{"message": message, "url": url} for message, url in _missing_services(request.user)],
         "warnings": warnings,
     }).data)
 
@@ -134,14 +143,13 @@ def setup(request):
 def sessions(request):
     data = _validated(s.SessionCreateSerializer, request.data)
     expansion = data["expansion_id"]
-    session = scan.start_session(expansion, data["condition"])
+    session = scan.start_session(request.user, expansion, data["condition"])
     warnings = []
     if expansion is not None:
         try:
-            with services.make_client() as client:
+            with services.service_client() as client:
                 catalog.ensure_blueprints(client, expansion)
-                my_id = (client.info() or {}).get("user_id")
-                pricing.fill_expansion(client, expansion, my_id)
+                pricing.fill_expansion(client, expansion)
         except CardTraderError as exc:
             warnings.append(f"Could not preload {expansion} from CardTrader: {exc}")
     body = s.SessionCreatedSerializer({"session": session, "warnings": warnings}, context={"request": request})
@@ -151,7 +159,7 @@ def sessions(request):
 @extend_schema(tags=TAGS, responses=s.SessionDetailSerializer, summary="A session, open or saved")
 @api_view(["GET"])
 def session_detail(request, uid):
-    session = _get_session(uid, open_only=False)
+    session = _get_session(request.user, uid, open_only=False)
     return Response(s.SessionDetailSerializer({"session": session}, context={"request": request}).data)
 
 
@@ -168,11 +176,11 @@ def _capture_result(result, message, session, line=None, status_code=status.HTTP
 @api_view(["POST"])
 @parser_classes([MultiPartParser])
 def captures(request, uid):
-    session = _get_session(uid)
+    session = _get_session(request.user, uid)
     data = _validated(s.CaptureSerializer, request.data)
     if not _openrouter_configured():
         raise ServiceMissing("Card recognition is not available right now — try again later")
-    missing = _missing_services()
+    missing = _missing_services(request.user)
     if missing:
         message, link = missing[0]
         raise ServiceMissing(message, link)
@@ -194,7 +202,7 @@ def captures(request, uid):
             if not rec.name and not rec.collector_number:  # an empty table, a hand, a blurred frame
                 scan.release_capture(capture)
                 return _capture_result("no_card", "No card in the picture — frame a card", session)
-            with services.make_client() as client:
+            with services.service_client() as client:
                 found = recognition.match(client, rec, session.expansion)
                 done, _ = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
         except (OpenRouterError, CardTraderError) as exc:
@@ -215,7 +223,7 @@ def captures(request, uid):
                summary="Search cards by name, to add or confirm one by hand")
 @api_view(["GET"])
 def search(request, uid):
-    session = _get_session(uid, open_only=False)
+    session = _get_session(request.user, uid, open_only=False)
     query = _validated(s.SearchQuerySerializer, request.query_params)
     warnings = []
     where = _search_expansion(query["set"], session, warnings)
@@ -230,11 +238,11 @@ def search(request, uid):
                summary="Add a card picked by hand")
 @api_view(["POST"])
 def manual(request, uid):
-    session = _get_session(uid)
+    session = _get_session(request.user, uid)
     data = _validated(s.PickSerializer, request.data)
     blueprint, language, foil = data["blueprint_id"], data["language"], data["foil"]
     try:
-        with services.make_client() as client:
+        with services.service_client() as client:
             line = scan.add_manual(session, client, blueprint, language, foil)
     except CardTraderError:
         line = scan.add_manual(session, None, blueprint, language, foil)
@@ -259,14 +267,14 @@ def _review(request, session):
 @extend_schema(tags=TAGS, responses=s.ReviewSerializer, summary="The session's cards, before saving")
 @api_view(["GET"])
 def review(request, uid):
-    return _review(request, _get_session(uid, open_only=False))
+    return _review(request, _get_session(request.user, uid, open_only=False))
 
 
 @extend_schema(tags=TAGS, request=s.ThresholdSerializer, responses=s.ReviewSerializer,
                summary="Set the sale threshold, then return the review")
 @api_view(["PUT"])
 def threshold(request, uid):
-    session = _get_session(uid)
+    session = _get_session(request.user, uid)
     session.sale_threshold = _validated(s.ThresholdSerializer, request.data)["threshold"]
     session.save(update_fields=["sale_threshold", "updated_at"])
     return _review(request, session)
@@ -276,7 +284,7 @@ def threshold(request, uid):
                summary="Save the session into the collection, queueing for sale the listed cards")
 @api_view(["POST"])
 def save(request, uid):
-    session = _get_session(uid)
+    session = _get_session(request.user, uid)
     try:
         saved, listed = scan.save_session(session)
     except scan.ScanError as exc:
@@ -292,7 +300,7 @@ def save(request, uid):
                summary="Change a line; quantity 0 removes it")
 @api_view(["PATCH"])
 def line_detail(request, uid):
-    line = _get_line(uid)
+    line = _get_line(request.user, uid)
     session = line.session
     changes = _validated(s.LineUpdateSerializer, request.data)
     return _line_result(scan.update_line(line, **changes), session)
@@ -302,7 +310,7 @@ def line_detail(request, uid):
                summary="Undo the last copy added to a line")
 @api_view(["POST"])
 def line_undo(request, uid):
-    line = _get_line(uid)
+    line = _get_line(request.user, uid)
     session = line.session
     scan.undo(line)
     survivor = ScanLine.objects.select_related("blueprint__expansion").filter(pk=line.pk).first() if line.pk else None
@@ -313,7 +321,7 @@ def line_undo(request, uid):
                summary="Confirm which card a line is; a line already confirmed is returned unchanged")
 @api_view(["POST"])
 def line_confirm(request, uid):
-    line = _get_line(uid)
+    line = _get_line(request.user, uid)
     session = line.session
     if not line.needs_confirmation:
         return _line_result(line, session)
@@ -322,7 +330,7 @@ def line_confirm(request, uid):
     line.foil = data["foil"]
     line.condition = data["condition"] or session.default_condition
     try:
-        with services.make_client() as client:
+        with services.service_client() as client:
             line = scan.confirm_line(line, client, blueprint, language)
     except CardTraderError:
         line = scan.confirm_line(line, None, blueprint, language)
@@ -333,7 +341,7 @@ def line_confirm(request, uid):
                summary="The photo of a line that needs confirmation")
 @api_view(["GET"])
 def line_frame(request, uid):
-    line = get_object_or_404(ScanLine, uuid=uid)
+    line = get_object_or_404(ScanLine.objects.owned_by(request.user), uuid=uid)
     if not line.frame:
         raise Http404
     return HttpResponse(bytes(line.frame), content_type="image/jpeg")

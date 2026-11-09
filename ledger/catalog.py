@@ -19,24 +19,40 @@ def blueprint_number(bp):
     return normalize_number((bp.get("fixed_properties") or {}).get("collector_number", ""))
 
 
+def _live_listing(item):
+    from .models import Listing
+
+    listing = getattr(item, "listing", None)
+    return listing if listing is not None and listing.status != Listing.Status.SOLD else None
+
+
+def _merge_pairs(source, target):
+    """[(source item, same owner's twin on target or None)]: copies only ever fold into their owner's own."""
+    pairs = []
+    for item in source.items.select_related("listing"):
+        twin = target.items.select_related("listing").filter(
+            owner_id=item.owner_id, condition=item.condition, language=item.language, foil=item.foil
+        ).first()
+        pairs.append((item, twin))
+    return pairs
+
+
+def clashing_owners(source, target):
+    """The users (ids) whose copies on both cards have live listings: merging would need two listings in one."""
+    return {
+        item.owner_id for item, twin in _merge_pairs(source, target)
+        if twin is not None and _live_listing(item) and _live_listing(twin)
+    }
+
+
 def merge_cards(source, target):
     """Move source's copies onto target (same printing). Returns False, changing nothing, on a listing clash."""
     from django.db import transaction
 
-    from .models import Listing
-
-    def live_listing(item):
-        listing = getattr(item, "listing", None)
-        return listing if listing is not None and listing.status != Listing.Status.SOLD else None
-
-    pairs = []
-    for item in source.items.select_related("listing"):
-        twin = target.items.select_related("listing").filter(
-            condition=item.condition, language=item.language, foil=item.foil
-        ).first()
-        if twin is not None and live_listing(item) and live_listing(twin):
-            return False
-        pairs.append((item, twin))
+    if clashing_owners(source, target):
+        return False
+    pairs = _merge_pairs(source, target)
+    live_listing = _live_listing
 
     with transaction.atomic():
         for item, twin in pairs:

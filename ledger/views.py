@@ -47,11 +47,12 @@ def _safe_next(request, default):
 
 @login_required
 def collection(request):
-    items = CollectionItem.objects.select_related("card", "listing")
+    items = CollectionItem.objects.owned_by(request.user).select_related("card", "listing")
     stats = items.aggregate(total=Sum("quantity"), value=Sum(VALUE))
-    stats["unique"] = Card.objects.filter(items__isnull=False).distinct().count()
+    stats["unique"] = Card.objects.filter(items__owner=request.user).distinct().count()
     stats["for_sale"] = (
-        Listing.objects.exclude(status=Listing.Status.SOLD).aggregate(n=Sum("quantity"))["n"] or 0
+        Listing.objects.owned_by(request.user).exclude(status=Listing.Status.SOLD)
+        .aggregate(n=Sum("quantity"))["n"] or 0
     )
 
     q = request.GET.get("q", "").strip()
@@ -94,7 +95,7 @@ def collection(request):
         "foil_href": _query(request, foil=None if foil else "1"),
         "set_code": set_code,
         "cond": cond,
-        "sets": Card.objects.filter(items__isnull=False).values_list("set_code", flat=True).distinct().order_by("set_code"),
+        "sets": Card.objects.filter(items__owner=request.user).values_list("set_code", flat=True).distinct().order_by("set_code"),
         "conditions": Condition.choices,
         "color": color,
         "filtered": bool(q or color or foil or set_code or cond),
@@ -103,7 +104,7 @@ def collection(request):
 
 @login_required
 def item_create(request):
-    form = CardItemForm(request.POST or None)
+    form = CardItemForm(request.POST or None, owner=request.user)
     if request.method == "POST" and form.is_valid():
         item = form.save()
         messages.success(request, f"Added {item.quantity}× {item.card.name}.")
@@ -115,7 +116,7 @@ def item_create(request):
 
 @login_required
 def item_edit(request, pk):
-    item = get_object_or_404(CollectionItem.objects.select_related("card"), pk=pk)
+    item = get_object_or_404(CollectionItem.objects.owned_by(request.user).select_related("card"), pk=pk)
     form = CardItemForm(request.POST or None, instance=item)
     if request.method == "POST" and form.is_valid():
         form.save()
@@ -130,7 +131,7 @@ def item_edit(request, pk):
 @login_required
 @require_POST
 def item_delete(request, pk):
-    item = get_object_or_404(CollectionItem, pk=pk)
+    item = get_object_or_404(CollectionItem.objects.owned_by(request.user), pk=pk)
     name = item.card.name
     item.delete()
     messages.success(request, f"Removed {name} from the collection.")
@@ -142,7 +143,7 @@ def import_csv(request):
     form = CsvImportForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         try:
-            created, updated = services.import_csv(form.cleaned_data["file"])
+            created, updated = services.import_csv(form.cleaned_data["file"], request.user)
         except services.CsvImportError as exc:
             form.add_error("file", str(exc))
         else:
@@ -155,12 +156,12 @@ def import_csv(request):
 
 @login_required
 def export_csv(request):
-    items = CollectionItem.objects.all()
+    items = CollectionItem.objects.owned_by(request.user)
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     stamp = timezone.localdate().isoformat()
     response["Content-Disposition"] = f'attachment; filename="mtg-ledger-{stamp}.csv"'
     services.export_csv(items, response)
-    SyncLog.objects.create(message=f"CSV export: collection exported ({items.count():,} rows)")
+    SyncLog.objects.create(owner=request.user, message=f"CSV export: collection exported ({items.count():,} rows)")
     return response
 
 
@@ -168,7 +169,7 @@ def export_csv(request):
 
 @login_required
 def sale(request):
-    listings = Listing.objects.select_related("item__card")
+    listings = Listing.objects.owned_by(request.user).select_related("item__card")
     active = listings.exclude(status=Listing.Status.SOLD)
     month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     stats = {
@@ -196,7 +197,7 @@ def cards(request):
     owned = request.GET.get("owned") == "1"
     page = None
     if q or set_code or number or owned:
-        owned_qty = cardmarket.owned_quantities()
+        owned_qty = cardmarket.owned_quantities(request.user)
         printings = Blueprint.objects.select_related("expansion", "cm_price").order_by("name", "expansion__code")
         if q:
             printings = printings.filter(Q(name__icontains=q) | Q(expansion__code__iexact=q))
@@ -219,7 +220,7 @@ def cards(request):
 
 @login_required
 def listing_edit(request, item_pk):
-    item = get_object_or_404(CollectionItem.objects.select_related("card"), pk=item_pk)
+    item = get_object_or_404(CollectionItem.objects.owned_by(request.user).select_related("card"), pk=item_pk)
     listing = getattr(item, "listing", None) or Listing(item=item, price=item.price, quantity=1)
     old_status = listing.status
     form = ListingForm(request.POST or None, instance=listing)
@@ -247,7 +248,7 @@ def listing_edit(request, item_pk):
 @login_required
 @require_POST
 def listing_delete(request, item_pk):
-    listing = get_object_or_404(Listing.objects.select_related("item__card"), item__pk=item_pk)
+    listing = get_object_or_404(Listing.objects.owned_by(request.user).select_related("item__card"), item__pk=item_pk)
     try:
         services.remove_listing(listing)
     except CardTraderError as exc:
@@ -261,7 +262,7 @@ def listing_delete(request, item_pk):
 @require_POST
 def publish(request):
     try:
-        result = services.publish_pending()
+        result = services.publish_pending(request.user)
     except CardTraderError as exc:
         messages.error(request, f"Publish failed: {exc}")
     else:
@@ -276,7 +277,7 @@ def publish(request):
 @require_POST
 def match_prices(request):
     try:
-        count = services.match_market_prices()
+        count = services.match_market_prices(request.user)
     except CardTraderError as exc:
         messages.error(request, f"Could not read market prices: {exc}")
         return redirect("ledger:sale")
@@ -288,19 +289,22 @@ def match_prices(request):
 
 @login_required
 def sync(request):
-    services.get_cardtrader()
-    connections = SyncService.objects.annotate(
+    services.get_cardtrader(request.user)
+    connections = SyncService.objects.filter(user=request.user).annotate(
         open_conflicts=Count("conflicts", filter=Q(conflicts__resolution=SyncConflict.Resolution.OPEN))
     )
     connections = list(connections)
     for s in connections:
-        s.token_ok = bool(services.api_token(s))
-    conflicts = SyncConflict.objects.filter(resolution=SyncConflict.Resolution.OPEN).select_related("item__card", "service")
+        s.token_ok = bool(s.api_token)
+    conflicts = (
+        SyncConflict.objects.owned_by(request.user).filter(resolution=SyncConflict.Resolution.OPEN)
+        .select_related("item__card", "service")
+    )
     return render(request, "ledger/sync.html", {
         "nav": "sync",
         "connections": connections,
         "conflicts": conflicts,
-        "log": SyncLog.objects.all()[:20],
+        "log": SyncLog.objects.visible_to(request.user)[:20],
     })
 
 
@@ -308,7 +312,7 @@ def sync(request):
 @require_POST
 def sync_all(request):
     try:
-        conflicts = services.sync_all()
+        conflicts = services.sync_all(request.user)
     except CardTraderError as exc:
         messages.error(request, f"Sync failed: {exc}")
     else:
@@ -319,7 +323,9 @@ def sync_all(request):
 @login_required
 @require_POST
 def resolve(request, pk):
-    conflict = get_object_or_404(SyncConflict, pk=pk, resolution=SyncConflict.Resolution.OPEN)
+    conflict = get_object_or_404(
+        SyncConflict.objects.owned_by(request.user), pk=pk, resolution=SyncConflict.Resolution.OPEN,
+    )
     keep = request.POST.get("keep")
     if keep not in (SyncConflict.Resolution.LEDGER, SyncConflict.Resolution.REMOTE):
         messages.error(request, "Choose which source to keep.")
@@ -337,7 +343,7 @@ def shipments(request):
     tab = request.GET.get("tab", "to_ship")
     if tab not in ORDER_TABS:
         tab = "to_ship"
-    orders = Order.objects.prefetch_related("items")
+    orders = Order.objects.owned_by(request.user).prefetch_related("items")
     month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     to_ship = orders.filter(state=Order.State.PAID)
     stats = {
@@ -358,13 +364,13 @@ def shipments(request):
     rows = [{"o": o, "badge": order_badge(o.state)} for o in shown[:200]]
     return render(request, "ledger/shipments.html", {
         "nav": "shipments", "stats": stats, "tabs": tabs, "rows": rows, "tab": tab,
-        "service": services.get_cardtrader(),
+        "service": services.get_cardtrader(request.user),
     })
 
 
 @login_required
 def order_detail(request, pk):
-    order = get_object_or_404(Order.objects.prefetch_related("items__listing__item__card"), pk=pk)
+    order = get_object_or_404(Order.objects.owned_by(request.user).prefetch_related("items__listing__item__card"), pk=pk)
     form = ShipForm(initial={"tracking_code": order.tracking_code})
     return render(request, "ledger/order_detail.html", {
         "nav": "shipments", "order": order, "form": form, "badge": order_badge(order.state),
@@ -374,7 +380,7 @@ def order_detail(request, pk):
 @login_required
 @require_POST
 def order_ship(request, pk):
-    order = get_object_or_404(Order, pk=pk)
+    order = get_object_or_404(Order.objects.owned_by(request.user), pk=pk)
     form = ShipForm(request.POST)
     if not form.is_valid():
         messages.error(request, "Invalid tracking code.")
@@ -398,9 +404,9 @@ def order_ship(request, pk):
 @login_required
 @require_POST
 def orders_sync(request):
-    service = services.get_cardtrader()
+    service = services.get_cardtrader(request.user)
     try:
-        with services.make_client(service) as client:
+        with services.user_client(request.user) as client:
             created, updated = services.import_orders(client, service)
     except CardTraderError as exc:
         messages.error(request, f"Orders not imported: {exc}")

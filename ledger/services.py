@@ -23,7 +23,7 @@ from .cardtrader import (
     money,
 )
 from .openrouter import OpenRouterClient
-from .catalog import blueprint_number, merge_cards, normalize_number
+from .catalog import blueprint_number, clashing_owners, merge_cards, normalize_number
 from .forms import get_or_create_card
 from .models import (
     Card,
@@ -43,41 +43,102 @@ CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "
 CARDTRADER = "CardTrader"
 
 
-def get_cardtrader():
+def get_cardtrader(user):
+    """The user's CardTrader connection (their own token and sync times)."""
     service, _ = SyncService.objects.get_or_create(
-        name=CARDTRADER,
+        user=user, name=CARDTRADER,
         defaults={"description": "Sale listings and orders", "direction": "Ledger ⇄ CardTrader (API)"},
     )
     return service
 
 
-def api_token(service=None):
-    service = service or get_cardtrader()
-    return service.api_token or getattr(settings, "CARDTRADER_API_TOKEN", "")
+def user_token(user):
+    """The user's own CardTrader token: the only one used for their listings, orders and shipments."""
+    service = SyncService.objects.filter(user=user, name=CARDTRADER).first()
+    return service.api_token if service else ""
 
 
-def make_client(service=None, token=None):
-    """Build the API client. Tests patch this to inject a mock transport."""
-    return CardTraderClient(token or api_token(service))
+def _service_account():
+    return (
+        SyncService.objects.filter(name=CARDTRADER, user__is_superuser=True)
+        .exclude(api_token="").select_related("user").order_by("user_id").first()
+    )
 
 
-def set_api_token(token):
-    """Check the token against CardTrader (/info), then store it. Returns the app info."""
+def service_token():
+    """The shared token for the catalog, prices and scanning: the first superuser's own CardTrader token."""
+    service = _service_account()
+    return service.api_token if service else ""
+
+
+def service_account_user():
+    """The administrator whose token is the shared one, or None."""
+    service = _service_account()
+    return service.user if service else None
+
+
+def make_client(token):
+    """Build the API client (an empty token raises CardTraderError). Tests patch this to inject a mock transport."""
+    return CardTraderClient(token)
+
+
+NO_SELLING_TOKEN = "Connect your CardTrader token in Profile and settings to sell."
+
+
+def user_client(user):
+    """The client for the user's own CardTrader account: never falls back to another user's token."""
+    token = user_token(user)
+    if not token:
+        raise CardTraderError(NO_SELLING_TOKEN)
+    return make_client(token)
+
+
+def service_client():
+    return make_client(service_token())
+
+
+class TokenInUse(Exception):
+    pass
+
+
+def _ct_user_id(token):
+    with make_client(token) as client:
+        return (client.info() or {}).get("user_id")
+
+
+def set_api_token(user, token):
+    """Check the token against CardTrader (/info), then store it as the user's own. Returns the app info.
+
+    A CardTrader account can be connected to one user only (TokenInUse otherwise).
+    """
     token = token.strip()
-    with make_client(token=token) as client:
+    with make_client(token) as client:
         info = client.info() or {}
-    service = get_cardtrader()
+    ct_user_id = info.get("user_id")
+    others = SyncService.objects.filter(name=CARDTRADER).exclude(user=user).exclude(api_token="")
+    for other in others.filter(ct_user_id__isnull=True):  # tokens kept from before: learn whose they are
+        try:
+            other.ct_user_id = _ct_user_id(other.api_token)
+        except CardTraderError:
+            continue
+        if other.ct_user_id is not None:
+            other.save(update_fields=["ct_user_id"])
+    if ct_user_id is not None and others.filter(ct_user_id=ct_user_id).exists():
+        raise TokenInUse("This CardTrader account is already connected to another user.")
+    service = get_cardtrader(user)
     service.api_token = token
-    service.save(update_fields=["api_token"])
-    _log(f"{CARDTRADER}: API token connected" + (f" (app {info['name']})" if info.get("name") else ""))
+    service.ct_user_id = ct_user_id
+    service.save(update_fields=["api_token", "ct_user_id"])
+    _log(f"{CARDTRADER}: API token connected" + (f" (app {info['name']})" if info.get("name") else ""), owner=user)
     return info
 
 
-def remove_api_token():
-    service = get_cardtrader()
+def remove_api_token(user):
+    service = get_cardtrader(user)
     service.api_token = ""
-    service.save(update_fields=["api_token"])
-    _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING)
+    service.ct_user_id = None
+    service.save(update_fields=["api_token", "ct_user_id"])
+    _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING, owner=user)
 
 
 def openrouter_key():
@@ -95,8 +156,8 @@ def make_openrouter():
     return OpenRouterClient(openrouter_key(), model=openrouter_model())
 
 
-def _log(message, level=SyncLog.Level.OK):
-    SyncLog.objects.create(message=message[:300], level=level)
+def _log(message, level=SyncLog.Level.OK, owner=None):
+    SyncLog.objects.create(message=message[:300], level=level, owner=owner)
 
 
 # --- CSV -----------------------------------------------------------------
@@ -132,8 +193,8 @@ def _choice(value, choices, default, field_name, line):
     return value
 
 
-def import_csv(uploaded_file):
-    """Create or update collection items from a CSV. Returns (created, updated)."""
+def import_csv(uploaded_file, owner):
+    """Create or update owner's collection items from a CSV. Returns (created, updated)."""
     try:
         text = uploaded_file.read().decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -167,6 +228,7 @@ def import_csv(uploaded_file):
                 color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
+                owner=owner,
                 card=card,
                 condition=_choice(row.get("condition"), Condition, Condition.NEAR_MINT, "condition", line),
                 language=_choice(row.get("language"), Language, Language.EN, "language", line),
@@ -181,7 +243,7 @@ def import_csv(uploaded_file):
                 item.save(update_fields=["quantity", "price", "updated_at"])
                 updated += 1
 
-        _log(f"CSV import: {created} new cards, {updated} quantities updated")
+        _log(f"CSV import: {created} new cards, {updated} quantities updated", owner=owner)
     return created, updated
 
 
@@ -235,9 +297,14 @@ def resolve_blueprints(client, cards):
                 unmatched.append(card)
                 continue
             if existing is not None:
-                if not merge_cards(card, existing):
-                    _log(f"{card} duplicates {existing} but both have live listings: merge them by hand",
-                         SyncLog.Level.WARNING)
+                clash = clashing_owners(card, existing)
+                if clash or not merge_cards(card, existing):
+                    # The clash is about someone's listings: only they see it, never in the shared log.
+                    for owner_id in clash:
+                        SyncLog.objects.create(
+                            owner_id=owner_id, level=SyncLog.Level.WARNING,
+                            message=f"{card} duplicates {existing} but both have live listings: merge them by hand"[:300],
+                        )
                     unmatched.append(card)
                     continue
                 if not existing.ct_blueprint_id:
@@ -287,17 +354,17 @@ class PublishResult:
     failed: list = field(default_factory=list)  # [(listing, reason)]
 
 
-def publish_pending():
-    """Push every listing waiting to be published to CardTrader."""
-    service = get_cardtrader()
+def publish_pending(user):
+    """Push every listing of the user waiting to be published to their CardTrader account."""
+    service = get_cardtrader(user)
     listings = list(
-        Listing.objects.filter(status=Listing.Status.TO_PUBLISH).select_related("item__card")
+        Listing.objects.owned_by(user).filter(status=Listing.Status.TO_PUBLISH).select_related("item__card")
     )
     result = PublishResult()
     if not listings:
         return result
 
-    with make_client(service) as client:
+    with user_client(user) as client:
         unmatched = {c.pk for c in resolve_blueprints(client, {l.item.card for l in listings})}
         # Resolution may merge duplicate printings: reload so listings point at the surviving cards.
         listings = list(
@@ -327,22 +394,23 @@ def publish_pending():
 
     service.last_sync = timezone.now()
     service.save(update_fields=["last_sync"])
-    _log(f"{CARDTRADER}: {result.published} listings published")
+    _log(f"{CARDTRADER}: {result.published} listings published", owner=user)
     for listing, reason in result.failed:
-        _log(f"{CARDTRADER}: {listing.item.card.name} not published ({reason})", SyncLog.Level.WARNING)
+        _log(f"{CARDTRADER}: {listing.item.card.name} not published ({reason})", SyncLog.Level.WARNING, owner=user)
     return result
 
 
 def remove_listing(listing):
     """Delete a listing locally and, if it was published, on CardTrader."""
+    owner = listing.item.owner
     if listing.ct_product_id and listing.status != Listing.Status.SOLD:
-        with make_client() as client:
+        with user_client(owner) as client:
             try:
                 client.delete_product(listing.ct_product_id)
             except CardTraderError as exc:
                 if exc.status != 404:  # already gone remotely: fine
                     raise
-        _log(f"{CARDTRADER}: listing for {listing.item.card.name} removed")
+        _log(f"{CARDTRADER}: listing for {listing.item.card.name} removed", owner=owner)
     listing.delete()
 
 
@@ -377,15 +445,15 @@ def refresh_market_prices(client, listings):
     return updated
 
 
-def match_market_prices():
-    """Refresh market prices from CardTrader, then align active listings to them."""
-    active = Listing.objects.exclude(status=Listing.Status.SOLD).select_related("item__card")
-    with make_client() as client:
+def match_market_prices(user):
+    """Refresh the market prices of the user's listings from CardTrader, then align active listings to them."""
+    active = Listing.objects.owned_by(user).exclude(status=Listing.Status.SOLD).select_related("item__card")
+    with user_client(user) as client:
         resolve_blueprints(client, {l.item.card for l in active})
         refresh_market_prices(client, list(active))
     with transaction.atomic():
         changed = (
-            Listing.objects.exclude(status=Listing.Status.SOLD)
+            Listing.objects.owned_by(user).exclude(status=Listing.Status.SOLD)
             .exclude(market_price__isnull=True)
             .exclude(price=F("market_price"))
         )
@@ -393,7 +461,7 @@ def match_market_prices():
             price=F("market_price"), status=Listing.Status.TO_PUBLISH, updated_at=timezone.now()
         )
         if count:
-            _log(f"{count} listing prices matched to market")
+            _log(f"{count} listing prices matched to market", owner=user)
     return count
 
 
@@ -428,8 +496,8 @@ def _apply_stock(order):
     order.save(update_fields=["stock_applied"])
 
 
-def upsert_order(data):
-    """Create/update an Order from the CardTrader payload. Returns (order, created)."""
+def upsert_order(data, owner):
+    """Create/update owner's Order from the CardTrader payload. Returns (order, created)."""
     address = data.get("order_shipping_address") or {}
     method = data.get("order_shipping_method") or {}
     buyer = data.get("buyer") or {}
@@ -437,6 +505,7 @@ def upsert_order(data):
     order, created = Order.objects.update_or_create(
         ct_id=data["id"],
         defaults={
+            "owner": owner,
             "code": data.get("code") or "",
             "state": data.get("state") or "",
             "via_cardtrader_zero": bool(data.get("via_cardtrader_zero")),
@@ -467,7 +536,7 @@ def upsert_order(data):
     )
     listings = {
         l.ct_product_id: l
-        for l in Listing.objects.filter(
+        for l in Listing.objects.owned_by(owner).filter(
             ct_product_id__in=[i.get("product_id") for i in data.get("order_items") or []]
         )
     }
@@ -494,25 +563,27 @@ def upsert_order(data):
 
 
 def import_orders(client, service):
+    """Import the orders of service's user (client is their own)."""
+    owner = service.user
     since = service.orders_synced_at - timedelta(days=14) if service.orders_synced_at else None
     created = updated = 0
     for data in client.all_orders(date_from=since.date() if since else None):
         with transaction.atomic():
-            _, was_created = upsert_order(data)
+            _, was_created = upsert_order(data, owner)
         created += was_created
         updated += not was_created
     service.orders_synced_at = timezone.now()
     service.save(update_fields=["orders_synced_at"])
-    to_ship = Order.objects.filter(state=Order.State.PAID).count()
-    _log(f"{CARDTRADER}: {created} new orders, {updated} updated, {to_ship} to ship")
+    to_ship = Order.objects.owned_by(owner).filter(state=Order.State.PAID).count()
+    _log(f"{CARDTRADER}: {created} new orders, {updated} updated, {to_ship} to ship", owner=owner)
     return created, updated
 
 
 def _diff_listings(service, products):
-    """Open/refresh conflicts between Ledger listings and CardTrader products."""
+    """Open/refresh conflicts between service's user's listings and their CardTrader products."""
     remote = {p["id"]: p for p in products}
     seen = set()
-    listings = Listing.objects.filter(
+    listings = Listing.objects.owned_by(service.user).filter(
         status=Listing.Status.PUBLISHED, ct_product_id__isnull=False
     ).select_related("item__card")
     for listing in listings:
@@ -538,18 +609,18 @@ def _diff_listings(service, products):
     return len(seen)
 
 
-def sync_all():
-    """Import orders (applying sold stock), then compare listings with CardTrader."""
-    service = get_cardtrader()
-    with make_client(service) as client:
+def sync_all(user):
+    """Import the user's orders (applying sold stock), then compare their listings with CardTrader."""
+    service = get_cardtrader(user)
+    with user_client(user) as client:
         import_orders(client, service)
         conflicts = _diff_listings(service, client.my_products() or [])
     service.last_sync = timezone.now()
     service.save(update_fields=["last_sync"])
     if conflicts:
-        _log(f"{CARDTRADER}: {conflicts} listings differ from Ledger", SyncLog.Level.WARNING)
+        _log(f"{CARDTRADER}: {conflicts} listings differ from Ledger", SyncLog.Level.WARNING, owner=user)
     else:
-        _log(f"{CARDTRADER}: listings in sync")
+        _log(f"{CARDTRADER}: listings in sync", owner=user)
     return conflicts
 
 
@@ -579,7 +650,8 @@ def resolve_conflict(conflict, keep):
         conflict.save(update_fields=["resolution"])
         _log(
             f"{conflict.service.name}: conflict on {conflict.item.card.name} resolved "
-            f"({conflict.get_resolution_display().lower()})"
+            f"({conflict.get_resolution_display().lower()})",
+            owner=conflict.item.owner,
         )
 
 
@@ -589,25 +661,25 @@ def ship_order(order, tracking_code=""):
     if (order.via_cardtrader_zero or order.tracked) and not (tracking_code or order.tracking_code):
         kind = "CardTrader Zero orders" if order.via_cardtrader_zero else "Tracked shipments"
         raise CardTraderError(f"{kind} need a tracking code before shipping.")
-    with make_client() as client:
+    with user_client(order.owner) as client:
         if tracking_code and tracking_code != order.tracking_code:
             client.set_tracking_code(order.ct_id, tracking_code)
             order.tracking_code = tracking_code
             order.save(update_fields=["tracking_code", "updated_at"])
         data = client.ship(order.ct_id)
     if isinstance(data, dict) and data.get("id") == order.ct_id:
-        order, _ = upsert_order(data)
+        order, _ = upsert_order(data, order.owner)
     else:
         order.state = Order.State.SENT
         order.sent_at = timezone.now()
         order.save(update_fields=["state", "sent_at", "updated_at"])
-    _log(f"{CARDTRADER}: order #{order.code} shipped")
+    _log(f"{CARDTRADER}: order #{order.code} shipped", owner=order.owner)
     return order
 
 
 def save_tracking_code(order, tracking_code):
-    with make_client() as client:
+    with user_client(order.owner) as client:
         client.set_tracking_code(order.ct_id, tracking_code.strip())
     order.tracking_code = tracking_code.strip()
     order.save(update_fields=["tracking_code", "updated_at"])
-    _log(f"{CARDTRADER}: tracking code set for order #{order.code}")
+    _log(f"{CARDTRADER}: tracking code set for order #{order.code}", owner=order.owner)

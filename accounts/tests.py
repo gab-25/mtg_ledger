@@ -62,55 +62,107 @@ class ProfileTest(TestCase):
         self.assertTrue(self.user.check_password("old-pass-123"))
 
 
-def fake_client(service=None, token=None):
+CT_ACCOUNTS = {"good-token": 7, "other-good": 8}
+
+
+def fake_client(token):
     def handler(request):
-        if request.headers["Authorization"].startswith("Bearer good-token"):
-            return httpx.Response(200, json={"id": 1, "name": "My shop", "user_id": 7})
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        for prefix, user_id in CT_ACCOUNTS.items():
+            if token.startswith(prefix):
+                return httpx.Response(200, json={"id": 1, "name": "My shop", "user_id": user_id})
         return httpx.Response(401, json={"error_code": "unauthorized", "extra": {"message": "bad token"}})
-    return CardTraderClient(token or services.api_token(service), transport=httpx.MockTransport(handler))
+    return CardTraderClient(token, transport=httpx.MockTransport(handler))
 
 
 @mock.patch.object(services, "make_client", side_effect=fake_client)
 class CardTraderTokenTest(TestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user("gab", password="pw")
+        User = get_user_model()
+        self.user = User.objects.create_user("gab", password="pw")
+        self.friend = User.objects.create_user("ami", password="pw")
         self.client.force_login(self.user)
         self.url = reverse("accounts:profile")
 
-    def connect(self, token):
+    def connect(self, token, user=None):
+        if user is not None:
+            self.client.force_login(user)
         return self.client.post(self.url, {"action": "cardtrader", "cardtrader-token": token})
 
-    def test_valid_token_is_checked_and_saved(self, _):
+    def test_valid_token_is_saved_on_own_account(self, _):
         resp = self.connect("  good-token ")
         self.assertRedirects(resp, self.url + "#cardtrader", fetch_redirect_response=False)
-        self.assertEqual(services.get_cardtrader().api_token, "good-token")
+        mine = services.get_cardtrader(self.user)
+        self.assertEqual((mine.api_token, mine.ct_user_id), ("good-token", 7))
+        self.assertEqual(services.get_cardtrader(self.friend).api_token, "")
         page = self.client.get(self.url)
         self.assertContains(page, "Replace token")
         self.assertNotContains(page, "good-token")  # never rendered back
-        self.assertTrue(SyncLog.objects.filter(message__contains="API token connected").exists())
+        self.assertTrue(SyncLog.objects.filter(owner=self.user, message__contains="API token connected").exists())
 
     def test_long_jwt_token_is_saved(self, _):
         token = "good-token." + "x" * 1200  # CardTrader tokens are JWTs, longer than 500 characters
         resp = self.connect(token)
         self.assertRedirects(resp, self.url + "#cardtrader", fetch_redirect_response=False)
-        self.assertEqual(services.get_cardtrader().api_token, token)
+        self.assertEqual(services.get_cardtrader(self.user).api_token, token)
 
     def test_rejected_token_is_not_saved(self, _):
         resp = self.connect("bad-token")
         self.assertContains(resp, "CardTrader rejected this token")
-        self.assertEqual(services.get_cardtrader().api_token, "")
+        self.assertEqual(services.get_cardtrader(self.user).api_token, "")
+
+    def test_same_cardtrader_account_rejected_for_second_user(self, _):
+        self.connect("good-token")
+        resp = self.connect("good-token-2", user=self.friend)
+        self.assertContains(resp, "already connected to another user")
+        self.assertEqual(services.get_cardtrader(self.friend).api_token, "")
+        self.assertEqual(services.get_cardtrader(self.user).api_token, "good-token")
+
+    def test_migrated_token_without_user_id_still_blocks_duplicates(self, _):
+        mine = services.get_cardtrader(self.user)
+        mine.api_token = "good-token"  # copied by the migration: its CardTrader user is not known yet
+        mine.save()
+        resp = self.connect("good-token-2", user=self.friend)
+        self.assertContains(resp, "already connected to another user")
+        mine.refresh_from_db()
+        self.assertEqual(mine.ct_user_id, 7)
+
+    def test_reconnecting_own_account_is_allowed(self, _):
+        self.connect("good-token")
+        resp = self.connect("good-token-new")
+        self.assertRedirects(resp, self.url + "#cardtrader", fetch_redirect_response=False)
+        self.assertEqual(services.get_cardtrader(self.user).api_token, "good-token-new")
+
+    def test_another_account_for_the_friend_is_fine(self, _):
+        self.connect("good-token")
+        self.connect("other-good", user=self.friend)
+        self.assertEqual(services.get_cardtrader(self.friend).ct_user_id, 8)
 
     def test_remove_token(self, _):
         self.connect("good-token")
+        self.connect("other-good", user=self.friend)
         self.client.post(self.url, {"action": "cardtrader_remove"})
-        self.assertEqual(services.get_cardtrader().api_token, "")
+        friend = services.get_cardtrader(self.friend)
+        self.assertEqual((friend.api_token, friend.ct_user_id), ("", None))
+        self.assertEqual(services.get_cardtrader(self.user).api_token, "good-token")
         self.assertContains(self.client.get(self.url), "Not connected")
 
-    @override_settings(CARDTRADER_API_TOKEN="env-token")
-    def test_environment_token_is_reported(self, _):
-        resp = self.client.get(self.url)
-        self.assertContains(resp, "CARDTRADER_API_TOKEN")
-        self.assertContains(resp, "Connected")
+    def test_admin_sees_shared_token_warning(self, _):
+        admin = get_user_model().objects.create_superuser("boss", password="pw")
+        self.connect("good-token", user=admin)
+        page = self.client.get(self.url)
+        self.assertContains(page, "also used to load the card catalog and prices for every user")
+        self.assertContains(page, "Catalog, prices and scanning will stop for everyone")
+        self.connect("other-good", user=self.friend)
+        page = self.client.get(self.url)
+        self.assertNotContains(page, "also used to load the card catalog")
+        self.assertNotContains(page, "will stop for everyone")
+
+    def test_environment_token_is_not_used(self, _):
+        with mock.patch.dict("os.environ", {"CARDTRADER_API_TOKEN": "env-token"}):
+            resp = self.client.get(self.url)
+        self.assertContains(resp, "Not connected")
+        self.assertNotContains(resp, "CARDTRADER_API_TOKEN")
 
     def test_sync_settings_links_to_profile(self, _):
         resp = self.client.get(reverse("ledger:sync"))

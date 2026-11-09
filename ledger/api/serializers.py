@@ -151,7 +151,7 @@ class SetupDefaultsSerializer(serializers.Serializer):
 
 class MissingServiceSerializer(serializers.Serializer):
     message = serializers.CharField()
-    url = serializers.CharField(help_text="Where to set it up (the profile page)")
+    url = serializers.CharField(help_text="Where to set it up (the profile page); empty when only the administrator can")
 
 
 class SetupSerializer(serializers.Serializer):

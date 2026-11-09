@@ -62,15 +62,15 @@
         <div class="profile-name" style="font-size:22px">{{ cardtrader.name }}</div>
         <div class="sub">Publishes your listings, imports orders and market prices. {% if cardtrader.last_sync %}Last sync {{ cardtrader.last_sync|naturaltime }}.{% else %}Never synced.{% endif %}</div>
       </div>
-      {% if token_saved or token_from_env %}
+      {% if token_saved %}
       <span class="badge badge-ok"><span class="pill-dot"></span>Connected</span>
       {% else %}
       <span class="badge badge-pending"><span class="pill-dot"></span>Not connected</span>
       {% endif %}
     </div>
 
-    {% if token_from_env %}
-    <p class="hint" style="margin:0">Using the token from the <code>CARDTRADER_API_TOKEN</code> environment variable. A token saved here takes precedence.</p>
+    {% if shares_token %}
+    <p class="hint" style="margin:0">As the administrator, your token is also used to load the card catalog and prices for every user, and to recognise their scanned cards.</p>
     {% endif %}
 
     <form method="post" action="{% url 'accounts:profile' %}#cardtrader" class="inline-form" novalidate>
@@ -85,7 +85,7 @@
       {% csrf_token %}
       <input type="hidden" name="action" value="cardtrader_remove">
       <span class="hint" style="flex:1">A token is saved. It is never shown again; replace it or remove it.</span>
-      <button type="submit" class="btn btn-danger" onclick="return confirm('Disconnect CardTrader? Publishing and syncing will stop until a new token is added.')">Remove token</button>
+      <button type="submit" class="btn btn-danger" onclick="return confirm('{% if shares_token %}Disconnect CardTrader? Catalog, prices and scanning will stop for everyone until a new token is added.{% else %}Disconnect CardTrader? Publishing and syncing will stop until a new token is added.{% endif %}')">Remove token</button>
     </form>
     {% endif %}
 
