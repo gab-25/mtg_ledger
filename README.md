@@ -131,7 +131,7 @@ are created as *To publish*).
 - The Docker image downloads the latest release of the app at build time: to ship a new version of the scan app,
   publish a release in mtg_ledger_scan and rebuild.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
-  `OPENROUTER_MODEL` picks the vision model (default `google/gemini-2.5-flash`).
+  `OPENROUTER_MODEL` picks the vision model (default `qwen/qwen3.8-flash`).
 - The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
 - The camera works on **smartphones only** (webcams can't focus on a card up close). A session started on a
   computer shows a **QR code** that opens the same session on the phone; Review, confirmation and search work on
