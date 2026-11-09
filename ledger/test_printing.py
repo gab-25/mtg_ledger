@@ -33,19 +33,19 @@ class PrintingModelTest(LedgerTestCase):
 
 class PrintingFormCsvTest(LedgerTestCase):
     def test_form_with_number_targets_printing(self):
-        resp = self.client.post(reverse("ledger:item_create"), {
+        resp = self.client.post(reverse("ledger:api_collection"), {
             "name": "Fable of the Mirror-Breaker", "set_code": "neo", "collector_number": "0356",
             "color": "R", "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00",
-        })
-        self.assertRedirects(resp, reverse("ledger:collection"))
+        }, content_type="application/json")
+        self.assertEqual(resp.status_code, 201)
         self.assertTrue(Card.objects.filter(set_code="NEO", collector_number="356").exists())
 
     def test_csv_number_column_roundtrip(self):
         upload = SimpleUploadedFile("c.csv", b"name,set,number,quantity\nFable of the Mirror-Breaker,neo,141,2\n")
-        self.client.post(reverse("ledger:import_csv"), {"file": upload})
+        self.client.post(reverse("ledger:api_import"), {"file": upload})
         self.assertTrue(Card.objects.filter(name="Fable of the Mirror-Breaker", set_code="NEO",
                                             collector_number="141").exists())
-        exported = self.client.get(reverse("ledger:export_csv")).content.decode()
+        exported = self.client.get(reverse("ledger:api_export")).content.decode()
         self.assertIn("price,number", exported.splitlines()[0])
         self.assertIn(",141", exported)
 
@@ -99,7 +99,7 @@ class ResolvePrintingTest(LedgerTestCase):
     def test_publish_after_merge_uses_surviving_printing(self):
         printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
                                        ct_blueprint_id=1201)
-        self.client.post(reverse("ledger:publish"))
+        self.client.post(reverse("ledger:api_publish"))
         listing = Listing.objects.get(item__card=printing)
         self.assertEqual(listing.status, Listing.Status.PUBLISHED)
 

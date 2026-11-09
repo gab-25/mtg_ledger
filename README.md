@@ -1,12 +1,17 @@
 # mtg_ledger_core
 MTG Ledger — Magic: The Gathering collection and CardTrader sales manager (Django).
 
+This repository is the server: the data, the CardTrader and OpenRouter integrations and a JSON API under `/api/`.
+The interface is a React single-page app in [mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui); Django serves
+its `index.html` for every page URL and its assets under `/static/ui/`.
+
 ## Structure
 
 - `config/` — Django project (settings, root URLs)
-- `theme/` — look and feel: `base.html` layout with sidebar, `static/theme/app.css` (design tokens + components), shared includes, login/account templates
-- `accounts/` — profile page: personal details, password change, CardTrader connection (API token)
-- `ledger/` — domain: cards, collection, sale listings, shipments, CardTrader client and sync, CSV import/export
+- `theme/` — serves the built React UI (`index.html` for every URL that is not `/api/`, `/admin/` or `/static/`)
+- `accounts/` — account API (`accounts/api.py`): who is logged in, login/logout, profile, password, CardTrader token
+- `ledger/` — domain: cards, collection, sale listings, shipments, CardTrader client and sync, CSV import/export;
+  `ledger/api/` is the JSON API of every page (collection, sale, cards, orders, sync, scan)
 
 ## Getting started
 
@@ -28,6 +33,17 @@ uv run python manage.py runserver
 ```
 
 Tests: `uv run python manage.py test`
+
+The pages come from the React UI: build it once and point `UI_APP_DIR` at it (default `ui_app/` in the project,
+gitignored). Without an `index.html` there every page answers *UI not built*.
+
+```bash
+(cd ../mtg_ledger_ui && npm install && npm run build)
+UI_APP_DIR=../mtg_ledger_ui/dist uv run python manage.py runserver
+```
+
+To work on the interface, run Django as above (no `UI_APP_DIR` needed) and `npm run dev` in mtg_ledger_ui: Vite
+serves the whole site with live reload and forwards `/api/`, `/admin/` and `/static/` to Django.
 
 ## Docker
 
@@ -128,22 +144,16 @@ Uncertain cards ask you to pick among candidates; **Review** shows the draft (du
 "list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
 are created as *To publish*).
 
-- The scan screens are a React single-page app, [mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui).
-  MTG Ledger serves its `index.html` for every `/scan/...` URL (login required) and its assets under
-  `/static/scan/`; the app talks to the JSON API under `/api/scan/` with the Django session and the `csrftoken`
-  cookie (sent back as `X-CSRFToken`). All the scan logic stays here.
-- The API is built with Django REST Framework (`ledger/api/`). Its OpenAPI schema is at `/api/schema/` and the
-  interactive docs at `/api/docs/` (both need login); `uv run python manage.py spectacular --file schema.yaml`
-  writes the schema, e.g. to generate the TypeScript types of the scan app. Errors use DRF's format:
-  `{"field": ["message"]}` for validation (400), otherwise `{"detail", "code", "help_url"?}`, with `code` such as
-  `not_authenticated` (403), `not_found`, `closed` (409: the session was already saved) or `service_missing` (503).
-- `SCAN_APP_DIR` is the folder with the built app (default `scan_app/` in the project, gitignored). Without an
-  `index.html` there, `/scan/` answers *Scan app not built*. In development build the app and point at it:
-  ```bash
-  (cd ../mtg_ledger_ui && npm run build)
-  SCAN_APP_DIR=../mtg_ledger_ui/dist uv run python manage.py runserver
-  ```
-- The Docker image downloads the latest release of the app at build time: to ship a new version of the scan app,
+- The scan screens are part of the React UI ([mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui)), under
+  `/scan/...`; they talk to the JSON API under `/api/scan/`. All the scan logic stays here.
+- The API is built with Django REST Framework (`ledger/api/`, `accounts/api.py`), with the Django session and the
+  `csrftoken` cookie (sent back as `X-CSRFToken`). Its OpenAPI schema is at `/api/schema/` and the interactive docs
+  at `/api/docs/` (both need login); `uv run python manage.py spectacular --file schema.yaml` writes the schema.
+  Errors use DRF's format: `{"field": ["message"]}` for validation (400), otherwise `{"detail", "code",
+  "help_url"?}`, with `code` such as `not_authenticated` (403), `not_found`, `closed` (409: the session was already
+  saved), `blocked` (409), `service_missing` (503) or `service_error` (502: CardTrader failed). Actions answer
+  `{"messages": [{"level", "text"}]}`, shown by the UI like Django's messages.
+- The Docker image downloads the latest release of the UI at build time: to ship a new version of the interface,
   publish a release in mtg_ledger_ui and rebuild.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
@@ -173,13 +183,13 @@ real certificate that only your own devices can reach; mtg_ledger_ui's `npm run 
 3. Start the database (`docker compose up -d db`) and Django (`uv run python manage.py runserver`), with
    `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` set for card recognition.
 4. In mtg_ledger_ui run `npm run dev:phone`: it checks Tailscale and that Django accepts the tailnet name, then
-   publishes the Vite dev server (the scan app with live reload, every other URL forwarded to Django) with
+   publishes the Vite dev server (the UI with live reload, `/api/`, `/admin/` and `/static/` forwarded to Django) with
    `tailscale serve` and prints the `https://<pc>.<tailnet>.ts.net` address. Ctrl+C removes the Tailscale rule.
 5. Open that address on the computer, connect CardTrader in **Profile and settings**, start a session in
    **Scan cards** and scan the QR code with the phone.
 
-To try the production setup instead (Django serving the built app, as in the Docker image), build it with
-`npm run build` in mtg_ledger_ui, start Django with `SCAN_APP_DIR` pointing at its `dist/` and expose port 8000
+To try the production setup instead (Django serving the built UI, as in the Docker image), build it with
+`npm run build` in mtg_ledger_ui, start Django with `UI_APP_DIR` pointing at its `dist/` and expose port 8000
 with `tailscale serve --https=443 8000`.
 
 If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.

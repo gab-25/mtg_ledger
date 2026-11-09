@@ -1,11 +1,10 @@
 from django.urls import path
 
-from . import api, views
+from . import api
 
 app_name = "accounts"
 
 urlpatterns = [
-    path("account/", views.profile, name="profile"),
     path("api/me/", api.me, name="api_me"),
     path("api/auth/csrf/", api.csrf, name="api_csrf"),
     path("api/auth/login/", api.login_view, name="api_login"),

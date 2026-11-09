@@ -1,6 +1,5 @@
 from django.urls import path
 
-from . import views
 from .api import cards as cards_api
 from .api import collection as collection_api
 from .api import orders as orders_api
@@ -11,14 +10,6 @@ from .api import sync as sync_api
 app_name = "ledger"
 
 urlpatterns = [
-    path("", views.collection, name="collection"),
-    path("cards/add/", views.item_create, name="item_create"),
-    path("cards/<int:pk>/", views.item_edit, name="item_edit"),
-    path("cards/<int:pk>/delete/", views.item_delete, name="item_delete"),
-    path("cards/import/", views.import_csv, name="import_csv"),
-    path("cards/export/", views.export_csv, name="export_csv"),
-    path("scan/", views.scan_app, name="scan_start"),
-    path("scan/<path:rest>", views.scan_app, name="scan_app"),
     path("api/choices/", collection_api.choices, name="api_choices"),
     path("api/collection/", collection_api.collection, name="api_collection"),
     path("api/collection/<int:pk>/", collection_api.item, name="api_item"),
@@ -49,17 +40,4 @@ urlpatterns = [
     path("api/scan/lines/<uuid:uid>/undo/", scan_api.line_undo, name="scan_api_undo"),
     path("api/scan/lines/<uuid:uid>/confirm/", scan_api.line_confirm, name="scan_api_confirm"),
     path("api/scan/lines/<uuid:uid>/frame.jpg", scan_api.line_frame, name="scan_api_frame"),
-    path("sale/", views.sale, name="sale"),
-    path("sale/<int:item_pk>/", views.listing_edit, name="listing_edit"),
-    path("sale/<int:item_pk>/delete/", views.listing_delete, name="listing_delete"),
-    path("sale/publish/", views.publish, name="publish"),
-    path("sale/match-prices/", views.match_prices, name="match_prices"),
-    path("cards/", views.cards, name="cards"),
-    path("shipments/", views.shipments, name="shipments"),
-    path("shipments/import/", views.orders_sync, name="orders_sync"),
-    path("shipments/<int:pk>/", views.order_detail, name="order_detail"),
-    path("shipments/<int:pk>/ship/", views.order_ship, name="order_ship"),
-    path("sync/", views.sync, name="sync"),
-    path("sync/all/", views.sync_all, name="sync_all"),
-    path("sync/conflicts/<int:pk>/resolve/", views.resolve, name="resolve"),
 ]

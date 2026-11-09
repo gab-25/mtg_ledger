@@ -262,18 +262,6 @@ class LedgerTestCase(TestCase):
 
 
 class PagesTest(LedgerTestCase):
-    def test_login_required(self):
-        self.client.logout()
-        resp = self.client.get(reverse("ledger:collection"))
-        self.assertRedirects(resp, f"{reverse('login')}?next=/")
-
-    def test_main_pages_render(self):
-        for name in ("collection", "sale", "sync", "shipments", "item_create", "import_csv"):
-            with self.subTest(name=name):
-                resp = self.client.get(reverse(f"ledger:{name}"))
-                self.assertEqual(resp.status_code, 200)
-                self.assertContains(resp, "theme/app.css")
-
     def collection(self, **params):
         resp = self.client.get(reverse("ledger:api_collection"), params)
         self.assertEqual(resp.status_code, 200)

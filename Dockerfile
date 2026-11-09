@@ -17,10 +17,10 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
-# The React scan app (gab-25/mtg_ledger_ui), always the latest release: ADD checks the download on every
+# The React UI (gab-25/mtg_ledger_ui), always the latest release: ADD checks the download on every
 # build, so a new release invalidates the cache.
-ADD https://github.com/gab-25/mtg_ledger_ui/releases/latest/download/mtg-ledger-scan.tar.gz /tmp/scan.tgz
-RUN rm -rf /app/scan_app && mkdir -p /app/scan_app && tar -xzf /tmp/scan.tgz -C /app/scan_app && rm /tmp/scan.tgz
+ADD https://github.com/gab-25/mtg_ledger_ui/releases/latest/download/mtg-ledger-ui.tar.gz /tmp/ui.tgz
+RUN rm -rf /app/ui_app && mkdir -p /app/ui_app && tar -xzf /tmp/ui.tgz -C /app/ui_app && rm /tmp/ui.tgz
 
 RUN python manage.py collectstatic --noinput
 
