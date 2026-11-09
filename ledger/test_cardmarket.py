@@ -112,6 +112,14 @@ class SyncTest(CardmarketTestCase):
         self.assertEqual((rag.cm_price_id, rag.image_url), (555001, "https://img/1001.jpg"))
         self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 8, 2))
 
+    def test_long_collector_number_stored(self):
+        # CardTrader numbers for some promo/anniversary printings, e.g. "10-013T/012-019T"
+        self.ct.blueprints[next(iter(self.ct.blueprints))][0]["fixed_properties"]["collector_number"] = "10-013T/012-019T"
+        self.sync()
+        self.assertTrue(Blueprint.objects.filter(collector_number="10-013T/012-019T").exists())
+        card = Card.objects.create(name="Token", set_code="SLD", collector_number="10-013T/012-019T")
+        self.assertEqual(Card.objects.get(pk=card.pk).collector_number, "10-013T/012-019T")
+
     def test_first_cardmarket_id_is_used(self):
         self.sync()
         self.assertEqual(Blueprint.objects.get(ct_id=1201).cm_price_id, 555201)

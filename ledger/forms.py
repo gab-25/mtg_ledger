@@ -20,7 +20,7 @@ class CardItemForm(forms.ModelForm):
 
     name = forms.CharField(max_length=200)
     set_code = forms.CharField(label="Set", max_length=10)
-    collector_number = forms.CharField(label="Collector number", max_length=12, required=False)
+    collector_number = forms.CharField(label="Collector number", max_length=40, required=False)
     type_line = forms.CharField(label="Type", max_length=200, required=False)
     color = forms.ChoiceField(choices=Color.choices, initial=Color.COLORLESS)
 

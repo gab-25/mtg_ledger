@@ -44,7 +44,7 @@ class Card(models.Model):
     name = models.CharField(max_length=200)
     type_line = models.CharField(max_length=200, blank=True)
     set_code = models.CharField(max_length=10)
-    collector_number = models.CharField(max_length=12, blank=True, default="")
+    collector_number = models.CharField(max_length=40, blank=True, default="")
     color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
@@ -298,7 +298,7 @@ class Blueprint(models.Model):
     ct_id = models.PositiveIntegerField("CardTrader blueprint", unique=True)
     expansion = models.ForeignKey(Expansion, on_delete=models.CASCADE, related_name="blueprints")
     name = models.CharField(max_length=200, db_index=True)
-    collector_number = models.CharField(max_length=12, blank=True)
+    collector_number = models.CharField(max_length=40, blank=True)
     version = models.CharField(max_length=80, blank=True)
     rarity = models.CharField(max_length=40, blank=True)
     image_url = models.URLField(max_length=500, blank=True)
