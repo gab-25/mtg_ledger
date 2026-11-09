@@ -13,7 +13,7 @@ from django.urls import reverse
 
 from . import services
 from .cardtrader import CardTraderClient, CardTraderError, money
-from .models import Card, CollectionItem, Listing, Order, SyncConflict, SyncLog
+from .models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 class FakeCardTrader:
@@ -160,6 +160,7 @@ class LedgerTestCase(TestCase):
         self.user = User.objects.create_superuser("gab", password="pw")  # the admin: owns the demo data
         self.other = User.objects.create_user("ami", password="pw")
         call_command("seed_demo", "--reset", "--user", "gab", stdout=StringIO())
+        SyncService.objects.filter(user=self.user).update(api_token="test-token", ct_user_id=77)
         self.client.force_login(self.user)
         self.ct = FakeCardTrader()
         patcher = mock.patch.object(services, "make_client", side_effect=self.ct.client)
@@ -431,7 +432,9 @@ class SyncTest(LedgerTestCase):
     def test_sync_page(self):
         resp = self.client.get(reverse("ledger:sync"))
         self.assertEqual(len(resp.context["conflicts"]), 3)
-        self.assertContains(resp, "Not configured")
+        self.assertContains(resp, "Configured")
+        self.client.force_login(self.other)
+        self.assertContains(self.client.get(reverse("ledger:sync")), "Not configured")
 
 
 class ShipmentsTest(LedgerTestCase):
@@ -506,3 +509,94 @@ class ShipmentsTest(LedgerTestCase):
         resp = self.client.get(reverse("ledger:order_detail", args=[order.pk]))
         self.assertContains(resp, "Mark as shipped")
         self.assertContains(resp, "Packing list")
+
+
+CONNECT = "Connect your CardTrader token in Profile and settings to sell."
+
+
+class SellingIsolationTest(LedgerTestCase):
+    """self.user (the admin) sells with their own token; self.other is a friend."""
+
+    def friend_listing(self, status=Listing.Status.TO_PUBLISH, ct_product_id=None, name="Lightning Bolt"):
+        card = Card.objects.create(name=name, set_code="M10", ct_blueprint_id=1001 if name == "Lightning Bolt" else None)
+        item = CollectionItem.objects.create(owner=self.other, card=card, quantity=2, price=Decimal("1.00"))
+        return Listing.objects.create(item=item, quantity=1, price=Decimal("1.00"), status=status,
+                                      ct_product_id=ct_product_id)
+
+    def give_friend_token(self):
+        service = services.get_cardtrader(self.other)
+        service.api_token, service.ct_user_id = "friend-token", 78
+        service.save()
+
+    def messages(self, resp):
+        return [str(m) for m in resp.wsgi_request._messages]
+
+    def test_friend_without_token_cannot_sell(self):
+        self.friend_listing()
+        order = Order.objects.create(owner=self.other, ct_id=99, code="c99", state=Order.State.PAID)
+        self.client.force_login(self.other)
+        self.ct.calls.clear()
+        for name, args in (("publish", []), ("sync_all", []), ("orders_sync", []), ("match_prices", []),
+                           ("order_ship", [order.pk])):
+            with self.subTest(name=name):
+                resp = self.client.post(reverse(f"ledger:{name}", args=args), {"tracking_code": "X"}, follow=True)
+                self.assertTrue(any(CONNECT in m for m in self.messages(resp)), self.messages(resp))
+        self.assertEqual(self.ct.calls, [])
+
+    def test_publish_only_pushes_own_listings(self):
+        self.give_friend_token()
+        self.friend_listing()
+        mine_before = Listing.objects.owned_by(self.user).filter(status=Listing.Status.TO_PUBLISH).count()
+        result = services.publish_pending(self.other)
+        self.assertEqual(result.published, 1)
+        self.assertEqual(Listing.objects.owned_by(self.other).get().status, Listing.Status.PUBLISHED)
+        self.assertEqual(
+            Listing.objects.owned_by(self.user).filter(status=Listing.Status.TO_PUBLISH).count(), mine_before,
+        )
+        self.assertTrue(SyncLog.objects.filter(owner=self.other, message__contains="listings published").exists())
+
+    def test_imported_orders_belong_to_the_importer_and_only_touch_own_stock(self):
+        self.give_friend_token()
+        theirs = self.friend_listing(status=Listing.Status.PUBLISHED, ct_product_id=5001)
+        mine = Listing.objects.owned_by(self.user).get(item__card__name="Sheoldred, the Apocalypse")
+        mine.ct_product_id, mine.status = 5002, Listing.Status.PUBLISHED
+        mine.save()
+        self.ct.orders = [order_payload(50, "paid", [(5001, "Lightning Bolt", 1), (5002, "Sheoldred", 1)])]
+        services.sync_all(self.other)
+        order = Order.objects.get(ct_id=50)
+        self.assertEqual(order.owner, self.other)
+        self.assertEqual(order.items.get(ct_product_id=5001).listing, theirs)
+        self.assertIsNone(order.items.get(ct_product_id=5002).listing)
+        mine.refresh_from_db()
+        self.assertEqual((mine.quantity, mine.item.quantity), (2, 2))
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.item.quantity, 1)
+
+    def test_sync_does_not_touch_other_users_conflicts(self):
+        self.give_friend_token()
+        services.sync_all(self.other)
+        self.assertEqual(SyncConflict.objects.owned_by(self.user).filter(resolution="open").count(), 3)
+
+    def test_other_users_objects_are_404(self):
+        listing = Listing.objects.owned_by(self.user).first()
+        conflict = SyncConflict.objects.owned_by(self.user).first()
+        order = Order.objects.owned_by(self.user).filter(state=Order.State.PAID).first()
+        self.client.force_login(self.other)
+        for method, name, args in (
+            ("get", "listing_edit", [listing.item.pk]), ("post", "listing_delete", [listing.item.pk]),
+            ("post", "resolve", [conflict.pk]), ("get", "order_detail", [order.pk]),
+            ("post", "order_ship", [order.pk]),
+        ):
+            with self.subTest(name=name):
+                resp = getattr(self.client, method)(reverse(f"ledger:{name}", args=args), {"keep": "remote"})
+                self.assertEqual(resp.status_code, 404)
+
+    def test_friend_pages_show_only_their_data(self):
+        SyncLog.objects.create(message="Global note")
+        self.client.force_login(self.other)
+        resp = self.client.get(reverse("ledger:sync"))
+        self.assertContains(resp, "Global note")
+        self.assertNotContains(resp, "6 listings published")
+        self.assertEqual(len(resp.context["conflicts"]), 0)
+        self.assertEqual(self.client.get(reverse("ledger:sale")).context["stats"]["active"], 0)
+        self.assertEqual(self.client.get(reverse("ledger:shipments")).context["rows"], [])
