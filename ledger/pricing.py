@@ -12,15 +12,15 @@ PRICE_TTL = timedelta(hours=6)
 LANGUAGE_FROM_CT = {v: k for k, v in LANGUAGE_TO_CT.items()}
 
 
-def _cheapest(offers, my_user_id, language=None, foil=None):
-    """{(language, foil, condition): cheapest price} from marketplace offers.
+def _cheapest(offers, language=None, foil=None):
+    """{(language, foil, condition): cheapest price} from marketplace offers, whoever sells them.
+
+    The cache is shared by every user, so nobody's own offers are left out.
 
     language/foil, when given, are the filter the request already applied (offers may not repeat them).
     """
     best = {}
     for p in offers:
-        if my_user_id is not None and (p.get("user") or {}).get("id") == my_user_id:
-            continue
         props = p.get("properties_hash") or {}
         lang = language or LANGUAGE_FROM_CT.get(props.get("mtg_language"))
         cond = CONDITION_FROM_CT.get(props.get("condition"))
@@ -42,11 +42,11 @@ def _store(blueprint_ct_id, best):
         )
 
 
-def fill_expansion(client, expansion, my_user_id):
+def fill_expansion(client, expansion):
     """Cache the cheapest offers of every printing in an expansion with one call. Returns rows stored."""
     stored = 0
     for bp_id, offers in client.marketplace_by_expansion(expansion.ct_id).items():
-        best = _cheapest(offers, my_user_id)
+        best = _cheapest(offers)
         _store(int(bp_id), best)
         stored += len(best)
     return stored
@@ -63,7 +63,7 @@ def _lookup(blueprint_ct_id, language, foil, condition):
     return fresh.aggregate(p=Min("price"))["p"]
 
 
-def price_for(client, blueprint_ct_id, language, foil, condition, *, my_user_id=None):
+def price_for(client, blueprint_ct_id, language, foil, condition):
     """Cheapest comparable offer (same condition preferred), from the cache or one API call. None if unknown."""
     price = _lookup(blueprint_ct_id, language, foil, condition)
     if price is not None:
@@ -73,5 +73,5 @@ def price_for(client, blueprint_ct_id, language, foil, condition, *, my_user_id=
     except CardTraderError as exc:
         SyncLog.objects.create(level=SyncLog.Level.WARNING, message=f"Market price unavailable: {exc}"[:300])
         return None
-    _store(blueprint_ct_id, _cheapest(offers, my_user_id, language=language, foil=foil))
+    _store(blueprint_ct_id, _cheapest(offers, language=language, foil=foil))
     return _lookup(blueprint_ct_id, language, foil, condition)

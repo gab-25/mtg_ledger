@@ -38,13 +38,19 @@ def _openrouter_configured():
     return not missing
 
 
-def _missing_services():
-    """Connections the user must set up in the profile before scanning: [(message, profile link)]."""
-    profile = reverse("accounts:profile")
+def _missing_services(user):
+    """Connections to set up before scanning: [(message, profile link or "")].
+
+    The catalog and prices come with the administrator's CardTrader token: only an administrator can fix it.
+    """
     missing = []
     if not services.service_token():
-        missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
-                        f"{profile}#cardtrader"))
+        if user.is_superuser:
+            missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
+                            reverse("accounts:profile") + "#cardtrader"))
+        else:
+            missing.append(("Card catalog and prices are unavailable: ask the administrator to connect CardTrader.",
+                            ""))
     return missing
 
 
@@ -123,7 +129,7 @@ def setup(request):
             "expansion_id": last.expansion_id if last else None,
             "condition": last.default_condition if last else Condition.NEAR_MINT,
         },
-        "missing": [{"message": message, "url": url} for message, url in _missing_services()],
+        "missing": [{"message": message, "url": url} for message, url in _missing_services(request.user)],
         "warnings": warnings,
     }).data)
 
@@ -140,8 +146,7 @@ def sessions(request):
         try:
             with services.service_client() as client:
                 catalog.ensure_blueprints(client, expansion)
-                my_id = (client.info() or {}).get("user_id")
-                pricing.fill_expansion(client, expansion, my_id)
+                pricing.fill_expansion(client, expansion)
         except CardTraderError as exc:
             warnings.append(f"Could not preload {expansion} from CardTrader: {exc}")
     body = s.SessionCreatedSerializer({"session": session, "warnings": warnings}, context={"request": request})
@@ -172,7 +177,7 @@ def captures(request, uid):
     data = _validated(s.CaptureSerializer, request.data)
     if not _openrouter_configured():
         raise ServiceMissing("Card recognition is not available right now — try again later")
-    missing = _missing_services()
+    missing = _missing_services(request.user)
     if missing:
         message, link = missing[0]
         raise ServiceMissing(message, link)

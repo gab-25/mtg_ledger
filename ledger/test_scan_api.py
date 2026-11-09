@@ -287,6 +287,25 @@ class MissingServicesTest(ScanApiBase):
         self.assertEqual(body["help_url"], reverse("accounts:profile") + "#cardtrader")
         self.assertEqual(self.recognizer.calls, 0)
 
+    def test_friend_scans_with_admin_token(self):
+        self.client.force_login(self.other)  # no CardTrader token of their own
+        self.assertEqual(self.call("get", "scan_api_setup").json()["missing"], [])
+        session = self.start()
+        self.assertEqual(self.capture(session).json()["result"], "added")
+
+    def test_capture_without_service_token_tells_friend_to_ask_admin(self):
+        self.client.force_login(self.other)
+        session = self.start()
+        self.set_keys(openrouter="or-key", cardtrader="")
+        body = self.assertError(self.capture(session), 503, "service_missing")
+        self.assertIn("ask the administrator to connect CardTrader", body["detail"])
+        self.assertNotIn("help_url", body)
+        self.assertEqual(self.recognizer.calls, 0)
+
+    def test_session_start_does_not_call_info(self):
+        self.start()
+        self.assertNotIn(("GET", "/info"), self.ct.calls)
+
     def test_setup_lists_missing_services(self):
         self.set_keys(openrouter="", cardtrader="")
         Expansion.objects.all().delete()
