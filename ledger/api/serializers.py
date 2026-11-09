@@ -13,6 +13,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from ..models import Blueprint, Condition, Expansion, Language, ScanLine, ScanSession
+from ..recognition import same_name
 
 MAX_FRAME_BYTES = 2 * 1024 * 1024
 PHONE_UA = re.compile(r"Mobi|Android|iPhone|iPod", re.IGNORECASE)
@@ -58,28 +59,45 @@ class BlueprintSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class CandidateSerializer(BlueprintSerializer):
+    """A printing to choose from; context["read_name"] is the name the model read on the card."""
+
+    matches_name = serializers.SerializerMethodField(
+        help_text="It carries the name read on the card: only such a candidate should be pre-selected")
+
+    class Meta(BlueprintSerializer.Meta):
+        fields = [*BlueprintSerializer.Meta.fields, "matches_name"]
+        read_only_fields = fields
+
+    def get_matches_name(self, bp) -> bool:
+        name = self.context.get("read_name", "")
+        return bool(name) and same_name(bp, name)
+
+
 class LineSerializer(serializers.ModelSerializer):
     blueprint = BlueprintSerializer(allow_null=True, read_only=True)
     listed = serializers.BooleanField(read_only=True, help_text="Will be queued for sale when the session is saved")
     frame_url = serializers.SerializerMethodField(help_text="The photo, kept while the card needs confirmation")
-    candidates = serializers.SerializerMethodField(help_text="The cards to choose from when it needs confirmation")
+    candidates = serializers.SerializerMethodField(
+        help_text="The cards to choose from when it needs confirmation, those matching read_name first")
 
     class Meta:
         model = ScanLine
         fields = ["uuid", "blueprint", "language", "foil", "condition", "quantity", "price", "for_sale", "listed",
-                  "needs_confirmation", "frame_url", "candidates"]
+                  "needs_confirmation", "read_name", "frame_url", "candidates"]
         read_only_fields = fields
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_frame_url(self, line):
         return reverse("ledger:scan_api_frame", args=[line.uuid]) if line.frame else None
 
-    @extend_schema_field(BlueprintSerializer(many=True))
+    @extend_schema_field(CandidateSerializer(many=True))
     def get_candidates(self, line):
         if not (line.needs_confirmation and line.candidates):
             return []
         by_id = {b.ct_id: b for b in Blueprint.objects.filter(ct_id__in=line.candidates).select_related("expansion")}
-        return BlueprintSerializer([by_id[i] for i in line.candidates if i in by_id], many=True).data
+        return CandidateSerializer([by_id[i] for i in line.candidates if i in by_id], many=True,
+                                   context={"read_name": line.read_name}).data
 
 
 class SessionSerializer(serializers.ModelSerializer):

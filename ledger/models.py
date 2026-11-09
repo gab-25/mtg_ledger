@@ -395,6 +395,7 @@ class ScanLine(models.Model):
     for_sale = models.BooleanField(null=True, blank=True, help_text="Empty: follow the session threshold")
     needs_confirmation = models.BooleanField(default=False)
     candidates = models.JSONField(default=list, blank=True, help_text="Blueprint ct_ids to choose from")
+    read_name = models.CharField(max_length=200, blank=True, help_text="The card name the model read")
     frame = models.BinaryField(null=True, blank=True)
     type_line = models.CharField(max_length=200, blank=True)
     color = models.CharField(max_length=1, choices=Color.choices, blank=True)
