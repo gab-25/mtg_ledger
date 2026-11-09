@@ -31,7 +31,7 @@ def _price(client, line):
         from . import services
 
         try:
-            with services.make_client() as own:
+            with services.service_client() as own:
                 return pricing.price_for(own, line.blueprint.ct_id, line.language, line.foil, line.condition)
         except CardTraderError:
             return None

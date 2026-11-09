@@ -57,14 +57,19 @@ docker run -p 8000:8000 \
 
 Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG` (default `false` in the image),
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
-reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`, `CARDTRADER_API_TOKEN`,
+reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`,
 `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`).
 Migrations never run on their own at container start: run `python manage.py migrate` yourself after each upgrade
 (e.g. `docker compose exec mtg_ledger python manage.py migrate`, or a one-off container of the image with that command).
 
 ## CardTrader
 
-Connect CardTrader from **Profile and settings → Connected services** (the token is checked with CardTrader before it is saved, and never shown again), or export `CARDTRADER_API_TOKEN`.
+Every user connects their own CardTrader token from **Profile and settings → Connected services** (the token is checked
+with CardTrader before it is saved, and never shown again); it is used only for that user's listings, orders and
+shipments, and a CardTrader account can be connected to one user only. The administrator's token (the first superuser
+with one) also loads the shared card catalog and prices and recognises everyone's scanned cards, so it must be connected
+for scanning to work. `CARDTRADER_API_TOKEN` is no longer read: on upgrade, the migration copies it into the first
+superuser's profile when no token was saved there.
 
 - **Publish**: listings "To publish" are created/updated on CardTrader with the bulk API. Cards are matched to the
   CardTrader catalog (blueprint) by set code + name the first time; unmatched cards stay pending with a warning.
@@ -84,7 +89,7 @@ Every night the Ledger reloads its card database from CardTrader (every MTG expa
 blueprint) and Cardmarket's public price guide (low, trend, average and the 1/7/30-day averages, regular and foil).
 Each CardTrader blueprint carries its Cardmarket product id, which ties it to its price. Your cards are matched to a
 printing by their CardTrader blueprint, or else by set code + collector number; the sync logs how many cards have no
-printing. It needs the CardTrader API token (environment or Profile and settings) on the worker too.
+printing. It uses the administrator's CardTrader token (Profile and settings).
 
 - **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
   how many copies you own and the Cardmarket prices.

@@ -230,7 +230,7 @@ def run_sync(cm_client=None):
     cm_client = cm_client or make_client()
     ct_client = None
     try:
-        ct_client = services.make_client()
+        ct_client = services.service_client()
         result = sync(cm_client, ct_client)
     except (CardmarketError, CardTraderError) as exc:
         SyncLog.objects.create(message=f"Cardmarket sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)

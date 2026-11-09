@@ -152,12 +152,14 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
 
 
 # Tests never use the real keys from the environment or a local .env file.
-@override_settings(CARDTRADER_API_TOKEN="", OPENROUTER_API_KEY="")
+@override_settings(OPENROUTER_API_KEY="")
 class LedgerTestCase(TestCase):
     def setUp(self):
         cache.clear()
+        User = get_user_model()
+        self.user = User.objects.create_superuser("gab", password="pw")  # the admin: owns the demo data
+        self.other = User.objects.create_user("ami", password="pw")
         call_command("seed_demo", "--reset", stdout=StringIO())
-        self.user = get_user_model().objects.create_user("gab", password="pw")
         self.client.force_login(self.user)
         self.ct = FakeCardTrader()
         patcher = mock.patch.object(services, "make_client", side_effect=self.ct.client)

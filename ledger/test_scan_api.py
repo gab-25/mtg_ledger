@@ -62,7 +62,7 @@ class ScanApiBase(LedgerTestCase):
         override = self.settings(OPENROUTER_API_KEY=openrouter, OPENROUTER_MODEL=model)
         override.enable()
         self.addCleanup(override.disable)
-        service = services.get_cardtrader()
+        service = services.get_cardtrader(self.user)
         service.api_token = cardtrader
         service.save()
 

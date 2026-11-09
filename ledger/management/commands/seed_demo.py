@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ledger.models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog
+from ledger.ownership import default_owner
 from ledger.services import get_cardtrader
 
 # name, type, set, cond, lang, qty, price, color, listing (status, price, market) or None
@@ -44,7 +45,7 @@ class Command(BaseCommand):
             Order.objects.all().delete()
             SyncLog.objects.all().delete()
         now = timezone.now()
-        service = get_cardtrader()
+        service = get_cardtrader(default_owner())
         service.last_sync = now - timedelta(days=1)
         service.save()
 

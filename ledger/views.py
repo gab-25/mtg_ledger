@@ -288,13 +288,13 @@ def match_prices(request):
 
 @login_required
 def sync(request):
-    services.get_cardtrader()
-    connections = SyncService.objects.annotate(
+    services.get_cardtrader(request.user)
+    connections = SyncService.objects.filter(user=request.user).annotate(
         open_conflicts=Count("conflicts", filter=Q(conflicts__resolution=SyncConflict.Resolution.OPEN))
     )
     connections = list(connections)
     for s in connections:
-        s.token_ok = bool(services.api_token(s))
+        s.token_ok = bool(s.api_token)
     conflicts = SyncConflict.objects.filter(resolution=SyncConflict.Resolution.OPEN).select_related("item__card", "service")
     return render(request, "ledger/sync.html", {
         "nav": "sync",
@@ -358,7 +358,7 @@ def shipments(request):
     rows = [{"o": o, "badge": order_badge(o.state)} for o in shown[:200]]
     return render(request, "ledger/shipments.html", {
         "nav": "shipments", "stats": stats, "tabs": tabs, "rows": rows, "tab": tab,
-        "service": services.get_cardtrader(),
+        "service": services.get_cardtrader(request.user),
     })
 
 
@@ -398,9 +398,9 @@ def order_ship(request, pk):
 @login_required
 @require_POST
 def orders_sync(request):
-    service = services.get_cardtrader()
+    service = services.get_cardtrader(request.user)
     try:
-        with services.make_client(service) as client:
+        with services.make_client(service.api_token) as client:
             created, updated = services.import_orders(client, service)
     except CardTraderError as exc:
         messages.error(request, f"Orders not imported: {exc}")

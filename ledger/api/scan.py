@@ -42,7 +42,7 @@ def _missing_services():
     """Connections the user must set up in the profile before scanning: [(message, profile link)]."""
     profile = reverse("accounts:profile")
     missing = []
-    if not services.api_token():
+    if not services.service_token():
         missing.append(("CardTrader is not connected: the card catalog and prices need its API token.",
                         f"{profile}#cardtrader"))
     return missing
@@ -57,7 +57,7 @@ def _search_expansion(code, session, warnings):
         expansion = catalog.expansion_by_code(code)
         if expansion is not None:
             try:
-                with services.make_client() as client:
+                with services.service_client() as client:
                     catalog.ensure_blueprints(client, expansion)
             except CardTraderError as exc:
                 warnings.append(f"Could not load {expansion}: {exc}")
@@ -108,9 +108,9 @@ def _line_result(line, session):
 @api_view(["GET"])
 def setup(request):
     warnings = []
-    if not Expansion.objects.exists() and services.api_token():
+    if not Expansion.objects.exists() and services.service_token():
         try:
-            with services.make_client() as client:
+            with services.service_client() as client:
                 catalog.sync_expansions(client)
         except CardTraderError as exc:
             warnings.append(f"Could not load the expansions from CardTrader: {exc}")
@@ -138,7 +138,7 @@ def sessions(request):
     warnings = []
     if expansion is not None:
         try:
-            with services.make_client() as client:
+            with services.service_client() as client:
                 catalog.ensure_blueprints(client, expansion)
                 my_id = (client.info() or {}).get("user_id")
                 pricing.fill_expansion(client, expansion, my_id)
@@ -194,7 +194,7 @@ def captures(request, uid):
             if not rec.name and not rec.collector_number:  # an empty table, a hand, a blurred frame
                 scan.release_capture(capture)
                 return _capture_result("no_card", "No card in the picture — frame a card", session)
-            with services.make_client() as client:
+            with services.service_client() as client:
                 found = recognition.match(client, rec, session.expansion)
                 done, _ = scan.add_capture(session, client, rec, found, frame=image, capture=capture)
         except (OpenRouterError, CardTraderError) as exc:
@@ -234,7 +234,7 @@ def manual(request, uid):
     data = _validated(s.PickSerializer, request.data)
     blueprint, language, foil = data["blueprint_id"], data["language"], data["foil"]
     try:
-        with services.make_client() as client:
+        with services.service_client() as client:
             line = scan.add_manual(session, client, blueprint, language, foil)
     except CardTraderError:
         line = scan.add_manual(session, None, blueprint, language, foil)
@@ -322,7 +322,7 @@ def line_confirm(request, uid):
     line.foil = data["foil"]
     line.condition = data["condition"] or session.default_condition
     try:
-        with services.make_client() as client:
+        with services.service_client() as client:
             line = scan.confirm_line(line, client, blueprint, language)
     except CardTraderError:
         line = scan.confirm_line(line, None, blueprint, language)

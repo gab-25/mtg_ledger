@@ -43,41 +43,102 @@ CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "
 CARDTRADER = "CardTrader"
 
 
-def get_cardtrader():
+def get_cardtrader(user):
+    """The user's CardTrader connection (their own token and sync times)."""
     service, _ = SyncService.objects.get_or_create(
-        name=CARDTRADER,
+        user=user, name=CARDTRADER,
         defaults={"description": "Sale listings and orders", "direction": "Ledger ⇄ CardTrader (API)"},
     )
     return service
 
 
-def api_token(service=None):
-    service = service or get_cardtrader()
-    return service.api_token or getattr(settings, "CARDTRADER_API_TOKEN", "")
+def user_token(user):
+    """The user's own CardTrader token: the only one used for their listings, orders and shipments."""
+    service = SyncService.objects.filter(user=user, name=CARDTRADER).first()
+    return service.api_token if service else ""
 
 
-def make_client(service=None, token=None):
-    """Build the API client. Tests patch this to inject a mock transport."""
-    return CardTraderClient(token or api_token(service))
+def _service_account():
+    return (
+        SyncService.objects.filter(name=CARDTRADER, user__is_superuser=True)
+        .exclude(api_token="").select_related("user").order_by("user_id").first()
+    )
 
 
-def set_api_token(token):
-    """Check the token against CardTrader (/info), then store it. Returns the app info."""
+def service_token():
+    """The shared token for the catalog, prices and scanning: the first superuser's own CardTrader token."""
+    service = _service_account()
+    return service.api_token if service else ""
+
+
+def service_account_user():
+    """The administrator whose token is the shared one, or None."""
+    service = _service_account()
+    return service.user if service else None
+
+
+def _selling_service():
+    """Interim (until selling is per user): the first superuser's connection."""
+    from .ownership import default_owner
+
+    return get_cardtrader(default_owner())
+
+
+def make_client(token):
+    """Build the API client (an empty token raises CardTraderError). Tests patch this to inject a mock transport."""
+    return CardTraderClient(token)
+
+
+def user_client(user):
+    return make_client(user_token(user))
+
+
+def service_client():
+    return make_client(service_token())
+
+
+class TokenInUse(Exception):
+    pass
+
+
+def _ct_user_id(token):
+    with make_client(token) as client:
+        return (client.info() or {}).get("user_id")
+
+
+def set_api_token(user, token):
+    """Check the token against CardTrader (/info), then store it as the user's own. Returns the app info.
+
+    A CardTrader account can be connected to one user only (TokenInUse otherwise).
+    """
     token = token.strip()
-    with make_client(token=token) as client:
+    with make_client(token) as client:
         info = client.info() or {}
-    service = get_cardtrader()
+    ct_user_id = info.get("user_id")
+    others = SyncService.objects.filter(name=CARDTRADER).exclude(user=user).exclude(api_token="")
+    for other in others.filter(ct_user_id__isnull=True):  # tokens kept from before: learn whose they are
+        try:
+            other.ct_user_id = _ct_user_id(other.api_token)
+        except CardTraderError:
+            continue
+        if other.ct_user_id is not None:
+            other.save(update_fields=["ct_user_id"])
+    if ct_user_id is not None and others.filter(ct_user_id=ct_user_id).exists():
+        raise TokenInUse("This CardTrader account is already connected to another user.")
+    service = get_cardtrader(user)
     service.api_token = token
-    service.save(update_fields=["api_token"])
-    _log(f"{CARDTRADER}: API token connected" + (f" (app {info['name']})" if info.get("name") else ""))
+    service.ct_user_id = ct_user_id
+    service.save(update_fields=["api_token", "ct_user_id"])
+    _log(f"{CARDTRADER}: API token connected" + (f" (app {info['name']})" if info.get("name") else ""), owner=user)
     return info
 
 
-def remove_api_token():
-    service = get_cardtrader()
+def remove_api_token(user):
+    service = get_cardtrader(user)
     service.api_token = ""
-    service.save(update_fields=["api_token"])
-    _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING)
+    service.ct_user_id = None
+    service.save(update_fields=["api_token", "ct_user_id"])
+    _log(f"{CARDTRADER}: API token removed", SyncLog.Level.WARNING, owner=user)
 
 
 def openrouter_key():
@@ -95,8 +156,8 @@ def make_openrouter():
     return OpenRouterClient(openrouter_key(), model=openrouter_model())
 
 
-def _log(message, level=SyncLog.Level.OK):
-    SyncLog.objects.create(message=message[:300], level=level)
+def _log(message, level=SyncLog.Level.OK, owner=None):
+    SyncLog.objects.create(message=message[:300], level=level, owner=owner)
 
 
 # --- CSV -----------------------------------------------------------------
@@ -289,7 +350,7 @@ class PublishResult:
 
 def publish_pending():
     """Push every listing waiting to be published to CardTrader."""
-    service = get_cardtrader()
+    service = _selling_service()
     listings = list(
         Listing.objects.filter(status=Listing.Status.TO_PUBLISH).select_related("item__card")
     )
@@ -297,7 +358,7 @@ def publish_pending():
     if not listings:
         return result
 
-    with make_client(service) as client:
+    with make_client(service.api_token) as client:
         unmatched = {c.pk for c in resolve_blueprints(client, {l.item.card for l in listings})}
         # Resolution may merge duplicate printings: reload so listings point at the surviving cards.
         listings = list(
@@ -336,7 +397,7 @@ def publish_pending():
 def remove_listing(listing):
     """Delete a listing locally and, if it was published, on CardTrader."""
     if listing.ct_product_id and listing.status != Listing.Status.SOLD:
-        with make_client() as client:
+        with make_client(_selling_service().api_token) as client:
             try:
                 client.delete_product(listing.ct_product_id)
             except CardTraderError as exc:
@@ -380,7 +441,7 @@ def refresh_market_prices(client, listings):
 def match_market_prices():
     """Refresh market prices from CardTrader, then align active listings to them."""
     active = Listing.objects.exclude(status=Listing.Status.SOLD).select_related("item__card")
-    with make_client() as client:
+    with make_client(_selling_service().api_token) as client:
         resolve_blueprints(client, {l.item.card for l in active})
         refresh_market_prices(client, list(active))
     with transaction.atomic():
@@ -540,8 +601,8 @@ def _diff_listings(service, products):
 
 def sync_all():
     """Import orders (applying sold stock), then compare listings with CardTrader."""
-    service = get_cardtrader()
-    with make_client(service) as client:
+    service = _selling_service()
+    with make_client(service.api_token) as client:
         import_orders(client, service)
         conflicts = _diff_listings(service, client.my_products() or [])
     service.last_sync = timezone.now()
@@ -589,7 +650,7 @@ def ship_order(order, tracking_code=""):
     if (order.via_cardtrader_zero or order.tracked) and not (tracking_code or order.tracking_code):
         kind = "CardTrader Zero orders" if order.via_cardtrader_zero else "Tracked shipments"
         raise CardTraderError(f"{kind} need a tracking code before shipping.")
-    with make_client() as client:
+    with make_client(_selling_service().api_token) as client:
         if tracking_code and tracking_code != order.tracking_code:
             client.set_tracking_code(order.ct_id, tracking_code)
             order.tracking_code = tracking_code
@@ -606,7 +667,7 @@ def ship_order(order, tracking_code=""):
 
 
 def save_tracking_code(order, tracking_code):
-    with make_client() as client:
+    with make_client(_selling_service().api_token) as client:
         client.set_tracking_code(order.ct_id, tracking_code.strip())
     order.tracking_code = tracking_code.strip()
     order.save(update_fields=["tracking_code", "updated_at"])
