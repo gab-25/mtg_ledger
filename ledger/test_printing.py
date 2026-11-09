@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from . import services
 from .catalog import merge_cards, normalize_number
-from .models import Card, CollectionItem, Listing
+from .models import Card, CollectionItem, Listing, SyncLog
 from .tests import LedgerTestCase
 
 
@@ -108,3 +108,24 @@ class ResolvePrintingTest(LedgerTestCase):
         legacy = Card.objects.get(name="Counterspell", set_code="DMR", collector_number="")
         self.assertEqual(self.resolve([legacy]), [legacy])
         self.assertTrue(Card.objects.filter(pk=legacy.pk, ct_blueprint_id__isnull=True).exists())
+
+
+class MergeClashLogTest(LedgerTestCase):
+    def test_clash_of_another_user_is_logged_only_for_them(self):
+        """The friend's publish hits a duplicate printing that only the admin's live listings keep apart."""
+        legacy = Card.objects.get(name="Ragavan, Nimble Pilferer", set_code="MH2")  # admin: live listing
+        printing = Card.objects.create(name="Ragavan, Nimble Pilferer", set_code="MH2", collector_number="138",
+                                       ct_blueprint_id=1001)
+        twin = CollectionItem.objects.create(owner=self.user, card=printing, condition="NM", language="EN")
+        Listing.objects.create(item=twin, price=Decimal("50.00"), status=Listing.Status.PUBLISHED, ct_product_id=4242)
+        theirs = CollectionItem.objects.create(owner=self.other, card=legacy, condition="LP", language="EN")
+        Listing.objects.create(item=theirs, price=Decimal("40.00"), status=Listing.Status.TO_PUBLISH)
+        service = services.get_cardtrader(self.other)
+        service.api_token, service.ct_user_id = "friend-token", 78
+        service.save()
+
+        services.publish_pending(self.other)
+
+        clash = "both have live listings"
+        self.assertFalse(SyncLog.objects.visible_to(self.other).filter(message__contains=clash).exists())
+        self.assertTrue(SyncLog.objects.filter(owner=self.user, message__contains=clash).exists())

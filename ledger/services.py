@@ -23,7 +23,7 @@ from .cardtrader import (
     money,
 )
 from .openrouter import OpenRouterClient
-from .catalog import blueprint_number, merge_cards, normalize_number
+from .catalog import blueprint_number, clashing_owners, merge_cards, normalize_number
 from .forms import get_or_create_card
 from .models import (
     Card,
@@ -297,9 +297,14 @@ def resolve_blueprints(client, cards):
                 unmatched.append(card)
                 continue
             if existing is not None:
-                if not merge_cards(card, existing):
-                    _log(f"{card} duplicates {existing} but both have live listings: merge them by hand",
-                         SyncLog.Level.WARNING)
+                clash = clashing_owners(card, existing)
+                if clash or not merge_cards(card, existing):
+                    # The clash is about someone's listings: only they see it, never in the shared log.
+                    for owner_id in clash:
+                        SyncLog.objects.create(
+                            owner_id=owner_id, level=SyncLog.Level.WARNING,
+                            message=f"{card} duplicates {existing} but both have live listings: merge them by hand"[:300],
+                        )
                     unmatched.append(card)
                     continue
                 if not existing.ct_blueprint_id:
