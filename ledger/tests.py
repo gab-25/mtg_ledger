@@ -1,17 +1,16 @@
 import json
 from decimal import Decimal
-from io import StringIO
 from unittest import mock
 
 import httpx
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from . import services
+from .demo_data import load_demo
 from .cardtrader import CardTraderClient, CardTraderError, money
 from .models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
@@ -159,7 +158,7 @@ class LedgerTestCase(TestCase):
         User = get_user_model()
         self.user = User.objects.create_superuser("gab", password="pw")  # the admin: owns the demo data
         self.other = User.objects.create_user("ami", password="pw")
-        call_command("seed_demo", "--reset", "--user", "gab", stdout=StringIO())
+        load_demo(self.user)
         SyncService.objects.filter(user=self.user).update(api_token="test-token", ct_user_id=77)
         self.client.force_login(self.user)
         self.ct = FakeCardTrader()
@@ -232,7 +231,7 @@ class CsvTest(LedgerTestCase):
 
 
 class CollectionIsolationTest(LedgerTestCase):
-    """seed_demo gave the demo collection to self.user; self.other is a friend with nothing yet."""
+    """load_demo gave the demo collection to self.user; self.other is a friend with nothing yet."""
 
     def as_other(self):
         self.client.force_login(self.other)

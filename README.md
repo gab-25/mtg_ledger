@@ -23,7 +23,6 @@ Connection settings come from environment variables (defaults match `compose.yam
 ```bash
 uv sync
 uv run python manage.py migrate
-uv run python manage.py seed_demo          # demo data from the design for the first superuser (--user NAME, --reset to wipe)
 uv run python manage.py createsuperuser
 uv run python manage.py runserver
 ```
@@ -78,8 +77,9 @@ Every user connects their own CardTrader token from **Profile and settings → C
 with CardTrader before it is saved, and never shown again); it is used only for that user's listings, orders and
 shipments, and a CardTrader account can be connected to one user only. The administrator's token (the first superuser
 with one) also loads the shared card catalog and prices and recognises everyone's scanned cards, so it must be connected
-for scanning to work. `CARDTRADER_API_TOKEN` is no longer read: on upgrade, the migration copies it into the first
-superuser's profile when no token was saved there.
+for scanning to work. `CARDTRADER_API_TOKEN` is no longer read (nor passed by `compose.yaml`): on upgrade, if it is
+still set where `migrate` runs and no token was saved in the profile, the migration copies it into the first
+superuser's profile; otherwise connect the token from the profile after upgrading.
 
 - **Publish**: listings "To publish" are created/updated on CardTrader with the bulk API. Cards are matched to the
   CardTrader catalog (blueprint) by set code + name the first time; unmatched cards stay pending with a warning.
