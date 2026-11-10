@@ -6,7 +6,8 @@ Authentication is the Django session; CSRF comes from the csrftoken cookie, sent
 from django.contrib.auth import login, logout, password_validation, update_session_auth_hash
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from rest_framework import status
+from drf_spectacular.utils import inline_serializer
+from rest_framework import serializers, status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -56,7 +57,13 @@ def csrf(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@doc(TAGS, "Log in with username and password")
+LOGIN_REQUEST = inline_serializer("LoginRequest", {
+    "username": serializers.CharField(),
+    "password": serializers.CharField(style={"input_type": "password"}),
+})
+
+
+@doc(TAGS, "Log in with username and password", request=LOGIN_REQUEST)
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
