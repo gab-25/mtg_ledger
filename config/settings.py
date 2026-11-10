@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import tomllib
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -171,9 +172,10 @@ REST_FRAMEWORK = {
 SPECTACULAR_SETTINGS = {
     'TITLE': 'MTG Ledger API',
     'DESCRIPTION': 'The JSON API of MTG Ledger, used by its React UI.',
-    'VERSION': '1.0.0',
+    # The project version, so the docs follow its bumps (pyproject.toml is in the image too).
+    'VERSION': tomllib.loads((BASE_DIR / 'pyproject.toml').read_text())['project']['version'],
     'SERVE_INCLUDE_SCHEMA': False,
-    'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAuthenticated'],
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],
     'COMPONENT_SPLIT_REQUEST': True,
     'ENUM_NAME_OVERRIDES': {
         'ConditionEnum': 'ledger.models.Condition',

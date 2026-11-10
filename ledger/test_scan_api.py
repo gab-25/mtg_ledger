@@ -1,10 +1,12 @@
 import json
 import tempfile
+import tomllib
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 from unittest import mock
 
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client
@@ -560,17 +562,20 @@ class SchemaTest(LedgerTestCase):
         self.assertIn("/api/scan/sessions/{uid}/captures/", schema["paths"])
         self.assertIn("Line", schema["components"]["schemas"])
 
+    def test_schema_version_is_the_project_version(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        pyproject = tomllib.loads((settings.BASE_DIR / "pyproject.toml").read_text())
+        self.assertEqual(json.loads(resp.content)["info"]["version"], pyproject["project"]["version"])
+
     def test_schema_generates_without_warnings(self):
         out, err = StringIO(), StringIO()
         call_command("spectacular", "--validate", "--fail-on-warn", stdout=out, stderr=err)
         self.assertEqual(err.getvalue(), "")
 
-    def test_docs_need_login(self):
-        self.assertContains(self.client.get(reverse("api_docs")), "swagger")
+    def test_docs_are_public(self):
         self.client.logout()
-        self.assertEqual(self.client.get(reverse("api_schema")).status_code, 403)
-        resp = self.client.get(reverse("api_docs"))
-        self.assertRedirects(resp, "/login/?next=/api/docs/", fetch_redirect_response=False)
+        self.assertEqual(self.client.get(reverse("api_schema")).status_code, 200)
+        self.assertContains(self.client.get(reverse("api_docs")), "swagger")
 
 
 class ScanIsolationTest(ScanApiBase):
