@@ -4,7 +4,7 @@ from django.urls import include, path, re_path
 from django.views.generic import RedirectView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from theme.views import ui_app
+from .views import ui_app
 
 urlpatterns = [
     path("favicon.ico", RedirectView.as_view(url=static("ui/favicon.svg"))),
