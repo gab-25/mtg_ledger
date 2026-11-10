@@ -1,10 +1,12 @@
 import json
 import tempfile
+import tomllib
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 from unittest import mock
 
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client
@@ -12,6 +14,7 @@ from django.urls import reverse
 
 from . import catalog, services
 from .api.serializers import MAX_FRAME_BYTES
+from .forms import CardItemForm, ListingForm
 from .cardtrader import CardTraderError
 from .models import Blueprint, CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
 from .openrouter import OpenRouterError
@@ -560,17 +563,55 @@ class SchemaTest(LedgerTestCase):
         self.assertIn("/api/scan/sessions/{uid}/captures/", schema["paths"])
         self.assertIn("Line", schema["components"]["schemas"])
 
+    def test_page_api_bodies_and_filters_are_documented(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        schema = json.loads(resp.content)
+        components = schema["components"]["schemas"]
+
+        def body(path, method):
+            content = schema["paths"][path][method].get("requestBody", {}).get("content", {})
+            return {kind: set(components[c["schema"]["$ref"].rsplit("/", 1)[1]]["properties"])
+                    for kind, c in content.items()}
+
+        card = set(CardItemForm.base_fields)
+        listing = set(ListingForm.base_fields)
+        self.assertEqual(body("/api/collection/", "post")["application/json"], card)
+        self.assertEqual(body("/api/collection/{id}/", "put")["application/json"], card)
+        self.assertEqual(body("/api/collection/import/", "post"), {"multipart/form-data": {"file"}})
+        self.assertEqual(body("/api/listings/{item_pk}/", "put")["application/json"], listing)
+        self.assertEqual(body("/api/orders/{id}/ship/", "post")["application/json"], {"tracking_code", "save_tracking"})
+        self.assertEqual(body("/api/sync/conflicts/{id}/resolve/", "post")["application/json"], {"keep"})
+        self.assertEqual(body("/api/account/profile/", "put")["application/json"], {"first_name", "last_name", "email"})
+        self.assertEqual(body("/api/account/password/", "post")["application/json"],
+                         {"old_password", "new_password1", "new_password2"})
+        self.assertEqual(body("/api/account/cardtrader-token/", "put")["application/json"], {"token"})
+        for path in ("/api/auth/logout/", "/api/listings/publish/", "/api/listings/match-prices/",
+                     "/api/orders/import/", "/api/sync/run/"):
+            self.assertEqual(body(path, "post"), {}, path)
+
+        def query(path):
+            return {p["name"] for p in schema["paths"][path]["get"].get("parameters", []) if p["in"] == "query"}
+
+        self.assertEqual(query("/api/collection/"), {"q", "color", "foil", "set", "cond", "page"})
+        self.assertEqual(query("/api/listings/"), {"status"})
+        self.assertEqual(query("/api/orders/"), {"tab"})
+        self.assertEqual(query("/api/cards/"), {"q", "set", "number", "owned", "page"})
+        self.assertNotIn("parameters", schema["paths"]["/api/collection/"]["post"])
+
+    def test_schema_version_is_the_project_version(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        pyproject = tomllib.loads((settings.BASE_DIR / "pyproject.toml").read_text())
+        self.assertEqual(json.loads(resp.content)["info"]["version"], pyproject["project"]["version"])
+
     def test_schema_generates_without_warnings(self):
         out, err = StringIO(), StringIO()
         call_command("spectacular", "--validate", "--fail-on-warn", stdout=out, stderr=err)
         self.assertEqual(err.getvalue(), "")
 
-    def test_docs_need_login(self):
-        self.assertContains(self.client.get(reverse("api_docs")), "swagger")
+    def test_docs_are_public(self):
         self.client.logout()
-        self.assertEqual(self.client.get(reverse("api_schema")).status_code, 403)
-        resp = self.client.get(reverse("api_docs"))
-        self.assertRedirects(resp, "/login/?next=/api/docs/", fetch_redirect_response=False)
+        self.assertEqual(self.client.get(reverse("api_schema")).status_code, 200)
+        self.assertContains(self.client.get(reverse("api_docs")), "swagger")
 
 
 class ScanIsolationTest(ScanApiBase):

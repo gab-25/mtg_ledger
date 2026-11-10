@@ -2,6 +2,7 @@
 
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
+from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -9,7 +10,7 @@ from rest_framework.response import Response
 from .. import services
 from ..cardtrader import CardTraderError
 from ..models import Listing, SyncConflict, SyncLog, SyncService
-from .common import doc, messages_response, msg
+from .common import body, doc, messages_response, msg
 from .errors import ServiceError
 
 TAGS = ["sync"]
@@ -65,7 +66,9 @@ def run(request):
     )
 
 
-@doc(TAGS, "Resolve a conflict keeping the Ledger value or the remote one (keep: ledger | remote)")
+@doc(TAGS, "Resolve a conflict keeping the Ledger value or the remote one (keep: ledger | remote)",
+     request=body("ResolveConflict", {"keep": serializers.ChoiceField(choices=[
+         SyncConflict.Resolution.LEDGER, SyncConflict.Resolution.REMOTE])}))
 @api_view(["POST"])
 def resolve(request, pk):
     conflict = get_object_or_404(

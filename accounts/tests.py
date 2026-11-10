@@ -110,6 +110,14 @@ class LoginTest(TestCase):
         self.assertEqual(resp.status_code, 204)
         self.assertEqual(self.client.get(reverse("accounts:api_me")).status_code, 403)
 
+    def test_schema_documents_the_login_body(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        schema = resp.json()
+        body = schema["paths"]["/api/auth/login/"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        login = schema["components"]["schemas"][body["$ref"].rsplit("/", 1)[1]]
+        self.assertEqual(set(login["properties"]), {"username", "password"})
+        self.assertEqual(set(login["required"]), {"username", "password"})
+
 
 CT_ACCOUNTS = {"good-token": 7, "other-good": 8}
 

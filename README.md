@@ -148,7 +148,7 @@ are created as *To publish*).
   `/scan/...`; they talk to the JSON API under `/api/scan/`. All the scan logic stays here.
 - The API is built with Django REST Framework (`ledger/api/`, `accounts/api.py`), with the Django session and the
   `csrftoken` cookie (sent back as `X-CSRFToken`). Its OpenAPI schema is at `/api/schema/` and the interactive docs
-  at `/api/docs/` (both need login); `uv run python manage.py spectacular --file schema.yaml` writes the schema.
+  at `/api/docs/` (both public); `uv run python manage.py spectacular --file schema.yaml` writes the schema.
   Errors use DRF's format: `{"field": ["message"]}` for validation (400), otherwise `{"detail", "code",
   "help_url"?}`, with `code` such as `not_authenticated` (403), `not_found`, `closed` (409: the session was already
   saved), `blocked` (409), `service_missing` (503) or `service_error` (502: CardTrader failed). Actions answer

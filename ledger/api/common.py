@@ -1,19 +1,62 @@
-"""Helpers shared by the page APIs: flash-style messages, Django form errors, pagination, safe redirects."""
+"""Helpers shared by the page APIs: OpenAPI docs, flash-style messages, Django form errors, pagination, safe redirects."""
 
+from django import forms
 from django.core.paginator import Paginator
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from django.utils.http import url_has_allowed_host_and_scheme
+from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 PAGE_SIZE = 50
 
 
-def doc(tags, summary, request=None):
-    """OpenAPI entry of a page API view: JSON objects in and out (the shapes are documented on each view)."""
-    return extend_schema(tags=tags, summary=summary, request=request or OpenApiTypes.OBJECT,
+def doc(tags, summary, request=None, parameters=None):
+    """OpenAPI entry of a page API view: its body (request; None: no body) and query parameters, a JSON object out."""
+    return extend_schema(tags=tags, summary=summary, request=request, parameters=parameters,
                          responses=OpenApiTypes.OBJECT)
+
+
+def body(name, fields):
+    """A request body with these serializer fields (the component is named <name>Request)."""
+    return inline_serializer(name, fields)
+
+
+def form_body(name, form_class, **extra):
+    """The request body of a view that validates request.data with a Django form: the form's fields, plus extra."""
+    return body(name, {**{key: _form_field(field) for key, field in form_class.base_fields.items()}, **extra})
+
+
+def _form_field(field):
+    kwargs = {"required": field.required}
+    if isinstance(field, forms.BooleanField):
+        return serializers.BooleanField(required=False)
+    if isinstance(field, forms.ChoiceField):
+        return serializers.ChoiceField(choices=[c for c in field.choices if c[0] != ""], **kwargs)
+    if isinstance(field, forms.DecimalField):  # before IntegerField, its parent
+        return serializers.DecimalField(max_digits=field.max_digits, decimal_places=field.decimal_places, **kwargs)
+    if isinstance(field, forms.IntegerField):
+        return serializers.IntegerField(min_value=field.min_value, max_value=field.max_value, **kwargs)
+    if isinstance(field, forms.FileField):
+        return serializers.FileField(**kwargs)
+    kwargs.update(max_length=field.max_length, allow_blank=not field.required)
+    if isinstance(field, forms.EmailField):
+        return serializers.EmailField(**kwargs)
+    if isinstance(field, forms.CharField):
+        if isinstance(field.widget, forms.PasswordInput):
+            kwargs["style"] = {"input_type": "password"}
+        return serializers.CharField(**kwargs)
+    raise TypeError(f"No OpenAPI field for {type(field).__name__}")
+
+
+def query(name, description, enum=None):
+    """A query parameter of a list view (a string, optionally one of enum)."""
+    return OpenApiParameter(name, OpenApiTypes.STR, OpenApiParameter.QUERY, description=description, enum=enum)
+
+
+PAGE = OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY,
+                        description="Page number (out of range: the nearest page)")
 
 
 def msg(level, text):

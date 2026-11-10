@@ -42,10 +42,6 @@ class UiAppTest(TestCase):
         self.client.force_login(get_user_model().objects.create_superuser("boss", password="x"))
         self.assertNotEqual(self.client.get("/admin/").content, self.INDEX)
 
-    def test_docs_login_goes_to_the_ui_login(self):
-        resp = self.client.get("/api/docs/")
-        self.assertRedirects(resp, "/login/?next=/api/docs/", fetch_redirect_response=False)
-
     def test_favicon_ico_redirects_to_the_svg(self):
         self.assertRedirects(
             self.client.get("/favicon.ico"), static("ui/favicon.svg"), fetch_redirect_response=False

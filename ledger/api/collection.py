@@ -14,10 +14,11 @@ from .. import services
 from ..forms import CardItemForm, CsvImportForm
 from ..models import Card, CollectionItem, Color, Condition, Language, Listing, SyncLog
 from ..presentation import COLOR_FILTERS, item_badge, pip
-from .common import doc, form_errors, messages_response, msg, page_payload
+from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
 VALUE = ExpressionWrapper(F("price") * F("quantity"), output_field=DecimalField())
+CARD_ITEM = form_body("CardItem", CardItemForm)
 
 
 def _choices(choices):
@@ -91,7 +92,15 @@ def _collection(request):
     })
 
 
-@doc(TAGS, "The collection (GET: ?q, color, foil, set, cond, page) or add cards to it (POST)")
+@doc(TAGS, "The collection (GET: ?q, color, foil, set, cond, page) or add cards to it (POST)", request=CARD_ITEM)
+@extend_schema(methods=["GET"], parameters=[
+    query("q", "Name, type or exact set code"),
+    query("color", "Card color", enum=Color.values),
+    query("foil", "1: foils only", enum=["1"]),
+    query("set", "Exact set code"),
+    query("cond", "Condition", enum=Condition.values),
+    PAGE,
+])
 @api_view(["GET", "POST"])
 def collection(request):
     if request.method == "GET":
@@ -104,7 +113,7 @@ def collection(request):
                              status=status.HTTP_201_CREATED, id=item.pk)
 
 
-@doc(TAGS, "One collection item: read (GET), change (PUT) or remove (DELETE)")
+@doc(TAGS, "One collection item: read (GET), change (PUT) or remove (DELETE)", request=CARD_ITEM)
 @extend_schema(methods=["GET"], operation_id="collection_item_retrieve")
 @api_view(["GET", "PUT", "DELETE"])
 def item(request, pk):
@@ -136,7 +145,8 @@ def item(request, pk):
     })
 
 
-@doc(TAGS, "CSV import: the columns (GET) or import a file (POST multipart 'file')")
+@doc(TAGS, "CSV import: the columns (GET) or import a file (POST multipart 'file')",
+     request={"multipart/form-data": form_body("CsvImport", CsvImportForm)})
 @api_view(["GET", "POST"])
 @parser_classes([MultiPartParser])
 def import_csv(request):
