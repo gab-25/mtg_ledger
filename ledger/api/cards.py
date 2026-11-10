@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from .. import cardmarket
 from ..catalog import normalize_number
 from ..models import Blueprint, CardmarketPrice
-from .common import doc, page_payload
+from .common import PAGE, doc, page_payload, query
 
 TAGS = ["cards"]
 PRICE_FIELDS = ("trend", "low", "avg", "trend_foil", "low_foil", "avg_foil")
@@ -17,7 +17,13 @@ def _money(value):
     return None if value is None else f"{value:.2f}"
 
 
-@doc(TAGS, "Search the card database by ?q (name or set code), set, number, owned=1; page")
+@doc(TAGS, "Search the card database by ?q (name or set code), set, number, owned=1; page", parameters=[
+    query("q", "Name, or exact set code"),
+    query("set", "Exact set code"),
+    query("number", "Collector number"),
+    query("owned", "1: only the printings you own", enum=["1"]),
+    PAGE,
+])
 @api_view(["GET"])
 def cards(request):
     params = request.query_params

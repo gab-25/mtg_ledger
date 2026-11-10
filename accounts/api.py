@@ -6,14 +6,13 @@ Authentication is the Django session; CSRF comes from the csrftoken cookie, sent
 from django.contrib.auth import login, logout, password_validation, update_session_auth_hash
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from drf_spectacular.utils import inline_serializer
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from ledger import services as ledger_services
-from ledger.api.common import doc, form_errors, messages_response, msg
+from ledger.api.common import doc, form_body, form_errors, messages_response, msg
 from ledger.cardtrader import CardTraderError
 from ledger.models import Listing, Order
 
@@ -57,13 +56,7 @@ def csrf(request):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-LOGIN_REQUEST = inline_serializer("LoginRequest", {
-    "username": serializers.CharField(),
-    "password": serializers.CharField(style={"input_type": "password"}),
-})
-
-
-@doc(TAGS, "Log in with username and password", request=LOGIN_REQUEST)
+@doc(TAGS, "Log in with username and password", request=form_body("Login", AuthenticationForm))
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
@@ -99,7 +92,7 @@ def account(request):
     })
 
 
-@doc(TAGS, "Change first name, last name and email")
+@doc(TAGS, "Change first name, last name and email", request=form_body("Profile", ProfileForm))
 @api_view(["PUT"])
 def profile(request):
     form = ProfileForm(request.data, instance=request.user)
@@ -109,7 +102,8 @@ def profile(request):
     return messages_response(msg("success", "Profile updated."))
 
 
-@doc(TAGS, "Change the password (the session stays logged in)")
+@doc(TAGS, "Change the password (the session stays logged in)",
+     request=form_body("PasswordChange", PasswordChangeForm))
 @api_view(["POST"])
 def password(request):
     form = PasswordChangeForm(request.user, request.data)
@@ -120,7 +114,8 @@ def password(request):
     return messages_response(msg("success", "Password changed."))
 
 
-@doc(TAGS, "Connect (PUT) or disconnect (DELETE) CardTrader with an API token")
+@doc(TAGS, "Connect (PUT) or disconnect (DELETE) CardTrader with an API token",
+     request=form_body("CardTraderToken", CardTraderTokenForm))
 @api_view(["PUT", "DELETE"])
 def cardtrader_token(request):
     user = request.user

@@ -13,7 +13,7 @@ from ..cardtrader import CardTraderError
 from ..forms import ListingForm
 from ..models import CollectionItem, Listing
 from ..presentation import listing_badge, pip
-from .common import doc, form_errors, messages_response, msg
+from .common import doc, form_body, form_errors, messages_response, msg, query
 from .errors import ServiceError
 
 TAGS = ["sale"]
@@ -41,7 +41,8 @@ def _row(listing):
     }
 
 
-@doc(TAGS, "Listings with the sale stats (?status filters them)")
+@doc(TAGS, "Listings with the sale stats (?status filters them)",
+     parameters=[query("status", "Only the listings in this status", enum=Listing.Status.values)])
 @api_view(["GET"])
 def listings(request):
     qs = Listing.objects.owned_by(request.user).select_related("item__card")
@@ -61,7 +62,8 @@ def listings(request):
     return Response({"stats": stats, "status": status, "results": [_row(l) for l in qs]})
 
 
-@doc(TAGS, "The listing of a collection item: read (GET), create or change (PUT), remove (DELETE)")
+@doc(TAGS, "The listing of a collection item: read (GET), create or change (PUT), remove (DELETE)",
+     request=form_body("Listing", ListingForm))
 @extend_schema(methods=["GET"], operation_id="listing_retrieve")
 @api_view(["GET", "PUT", "DELETE"])
 def listing(request, item_pk):

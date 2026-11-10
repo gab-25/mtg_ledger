@@ -4,6 +4,7 @@ from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -13,7 +14,7 @@ from ..cardtrader import CardTraderError
 from ..forms import ShipForm
 from ..models import Order
 from ..presentation import ORDER_TABS, order_badge
-from .common import doc, messages_response, msg
+from .common import doc, form_body, messages_response, msg, query
 from .errors import Blocked, ServiceError
 
 TAGS = ["orders"]
@@ -44,7 +45,8 @@ def _row(order):
     }
 
 
-@doc(TAGS, "Orders of one tab (?tab: to_ship, ct_zero, shipped, completed, issues) with the shipping stats")
+@doc(TAGS, "Orders of one tab (?tab: to_ship, ct_zero, shipped, completed, issues) with the shipping stats",
+     parameters=[query("tab", "The tab (default: to_ship)", enum=list(ORDER_TABS))])
 @api_view(["GET"])
 def orders(request):
     tab = request.query_params.get("tab", "to_ship")
@@ -102,7 +104,9 @@ def order(request, pk):
     })
 
 
-@doc(TAGS, "Save the tracking code (save_tracking: true) or mark the order as shipped")
+@doc(TAGS, "Save the tracking code (save_tracking: true) or mark the order as shipped",
+     request=form_body("Ship", ShipForm, save_tracking=serializers.BooleanField(
+         required=False, help_text="true: only save the tracking code on CardTrader, without shipping")))
 @api_view(["POST"])
 def ship(request, pk):
     obj = get_object_or_404(Order.objects.owned_by(request.user), pk=pk)

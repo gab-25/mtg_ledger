@@ -14,6 +14,7 @@ from django.urls import reverse
 
 from . import catalog, services
 from .api.serializers import MAX_FRAME_BYTES
+from .forms import CardItemForm, ListingForm
 from .cardtrader import CardTraderError
 from .models import Blueprint, CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
 from .openrouter import OpenRouterError
@@ -561,6 +562,41 @@ class SchemaTest(LedgerTestCase):
         schema = json.loads(resp.content)
         self.assertIn("/api/scan/sessions/{uid}/captures/", schema["paths"])
         self.assertIn("Line", schema["components"]["schemas"])
+
+    def test_page_api_bodies_and_filters_are_documented(self):
+        resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
+        schema = json.loads(resp.content)
+        components = schema["components"]["schemas"]
+
+        def body(path, method):
+            content = schema["paths"][path][method].get("requestBody", {}).get("content", {})
+            return {kind: set(components[c["schema"]["$ref"].rsplit("/", 1)[1]]["properties"])
+                    for kind, c in content.items()}
+
+        card = set(CardItemForm.base_fields)
+        listing = set(ListingForm.base_fields)
+        self.assertEqual(body("/api/collection/", "post")["application/json"], card)
+        self.assertEqual(body("/api/collection/{id}/", "put")["application/json"], card)
+        self.assertEqual(body("/api/collection/import/", "post"), {"multipart/form-data": {"file"}})
+        self.assertEqual(body("/api/listings/{item_pk}/", "put")["application/json"], listing)
+        self.assertEqual(body("/api/orders/{id}/ship/", "post")["application/json"], {"tracking_code", "save_tracking"})
+        self.assertEqual(body("/api/sync/conflicts/{id}/resolve/", "post")["application/json"], {"keep"})
+        self.assertEqual(body("/api/account/profile/", "put")["application/json"], {"first_name", "last_name", "email"})
+        self.assertEqual(body("/api/account/password/", "post")["application/json"],
+                         {"old_password", "new_password1", "new_password2"})
+        self.assertEqual(body("/api/account/cardtrader-token/", "put")["application/json"], {"token"})
+        for path in ("/api/auth/logout/", "/api/listings/publish/", "/api/listings/match-prices/",
+                     "/api/orders/import/", "/api/sync/run/"):
+            self.assertEqual(body(path, "post"), {}, path)
+
+        def query(path):
+            return {p["name"] for p in schema["paths"][path]["get"].get("parameters", []) if p["in"] == "query"}
+
+        self.assertEqual(query("/api/collection/"), {"q", "color", "foil", "set", "cond", "page"})
+        self.assertEqual(query("/api/listings/"), {"status"})
+        self.assertEqual(query("/api/orders/"), {"tab"})
+        self.assertEqual(query("/api/cards/"), {"q", "set", "number", "owned", "page"})
+        self.assertNotIn("parameters", schema["paths"]["/api/collection/"]["post"])
 
     def test_schema_version_is_the_project_version(self):
         resp = self.client.get(reverse("api_schema"), HTTP_ACCEPT="application/vnd.oai.openapi+json")
