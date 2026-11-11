@@ -75,7 +75,8 @@ with demo data and a CardTrader token, a second user `ami`, and `FakeCardTrader`
 
 ## Conventions
 
-- Migrations never run at container start; data migrations exist for the single- to multi-user upgrade.
+- The image's CMD runs `migrate --noinput` before gunicorn (not in the worker); data migrations exist for the single-
+  to multi-user upgrade.
 - `docs/superpowers/` is gitignored (local design notes): never commit it.
 - Work on a branch in the main checkout; PRs are squash-merged into `main` and named after the change.
   Releases (GitHub release → Docker image on ghcr.io) bump `version` in `pyproject.toml`.
