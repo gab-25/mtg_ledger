@@ -51,6 +51,14 @@ class ListingSuggestionTest(LedgerTestCase):
         self.item.save()
         self.assertEqual(self.suggestion(), "12.75")
 
+    def test_product_suggestion_uses_trend(self):
+        Blueprint.objects.filter(ct_id=9001).update(category=Category.objects.get(ct_id=4))
+        self.item.card.is_product = True
+        self.item.card.save()
+        self.item.foil = True  # a product is never foil, whatever the row says
+        self.item.save()
+        self.assertEqual(self.suggestion(), "12.75")
+
     def test_shows_foil_trend_for_foil_item(self):
         self.item.foil = True
         self.item.save()

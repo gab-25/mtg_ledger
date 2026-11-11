@@ -77,7 +77,7 @@ def suggested_price(card, foil):
     price = CardmarketPrice.objects.filter(pk=bp.cm_price_id).first()
     if price is None:
         return None
-    return price.trend_foil if foil else price.trend
+    return price.trend_foil if foil and not card.is_product else price.trend
 
 
 def owned_quantities(owner):

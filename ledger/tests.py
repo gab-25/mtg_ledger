@@ -59,6 +59,8 @@ class FakeCardTrader:
         self.next_product = 5000
         self.jobs = {}
         self.calls = []
+        self.call_params = []  # (path, query params) of every call
+        self.offers = {}  # blueprint id -> marketplace offers replacing the default ones
         self.fail_blueprints = set()
         self.fail_export = set()  # expansion ids whose /blueprints/export answers 500
         self.fail_marketplace = False
@@ -67,6 +69,7 @@ class FakeCardTrader:
         path = request.url.path.removeprefix("/api/v2")
         method = request.method
         self.calls.append((method, path))
+        self.call_params.append((path, dict(request.url.params)))
         body = json.loads(request.content) if request.content else {}
         params = dict(request.url.params)
 
@@ -116,6 +119,9 @@ class FakeCardTrader:
                 offer(900, 4, "Near Mint", "en", True),
                 offer(500, 5, "Near Mint", "tlh", False),  # unknown language: skipped
             ] for bp in self.blueprints.get(int(params["expansion_id"]), [])})
+        if path == "/marketplace/products" and int(params["blueprint_id"]) in self.offers:
+            bp = params["blueprint_id"]
+            return httpx.Response(200, json={bp: self.offers[int(bp)]})
         if path == "/marketplace/products":
             bp = params["blueprint_id"]
             return httpx.Response(200, json={bp: [
@@ -616,6 +622,66 @@ class PublishTest(LedgerTestCase):
         self.assertEqual(resp.status_code, 502)
         self.assertEqual(resp.json()["detail"], "Listing not removed: down")
         self.assertTrue(Listing.objects.filter(pk=listing.pk).exists())
+
+
+class ProductSellingTest(LedgerTestCase):
+    """A booster box (takes a language) and a playmat (takes nothing) listed for sale."""
+
+    def setUp(self):
+        super().setUp()
+        load_dmu(self)
+        self.box = self.listed(1390)
+        self.mat = self.listed(1391)
+
+    def listed(self, blueprint):
+        item = CollectionItem.objects.get(pk=add(self, blueprint, quantity=2, price="90.00").json()["id"])
+        return Listing.objects.create(item=item, quantity=1, price=Decimal("90.00"))
+
+    def properties(self, listing):
+        listing.refresh_from_db()
+        return self.ct.products[listing.ct_product_id]["properties_hash"]
+
+    def test_publish_booster_box_payload(self):
+        self.publish()
+        self.assertEqual(self.properties(self.box), {"mtg_language": "en"})
+
+    def test_publish_playmat_has_no_language(self):
+        self.publish()
+        self.assertEqual(self.properties(self.mat), {})
+        self.assertEqual(self.mat.status, Listing.Status.PUBLISHED)
+
+    def test_product_market_price_ignores_condition_and_foil(self):
+        self.ct.offers[1390] = [
+            {"price": {"cents": 7000, "currency": "EUR"}, "user": {"id": 77}, "properties_hash": {}},  # own
+            {"price": {"cents": 8500, "currency": "EUR"}, "user": {"id": 2}, "properties_hash": {"mtg_language": "en"}},
+            {"price": {"cents": 9900, "currency": "EUR"}, "user": {"id": 3}, "properties_hash": {}},
+        ]
+        self.client.post(reverse("ledger:api_match_prices"))
+        self.box.refresh_from_db()
+        self.assertEqual(self.box.market_price, Decimal("85.00"))
+        [(_, params)] = [c for c in self.ct.call_params if c[1].get("blueprint_id") == "1390"]
+        self.assertNotIn("foil", params)
+        self.assertEqual(params["language"], "en")
+
+    def test_playmat_market_price_without_language(self):
+        self.ct.offers[1391] = [
+            {"price": {"cents": 1500, "currency": "EUR"}, "user": {"id": 2}, "properties_hash": {}},
+        ]
+        self.client.post(reverse("ledger:api_match_prices"))
+        self.mat.refresh_from_db()
+        self.assertEqual(self.mat.market_price, Decimal("15.00"))
+        [(_, params)] = [c for c in self.ct.call_params if c[1].get("blueprint_id") == "1391"]
+        self.assertNotIn("language", params)
+        self.assertNotIn("foil", params)
+
+    def test_order_of_product_is_imported(self):
+        self.publish()
+        self.box.refresh_from_db()
+        self.ct.orders = [order_payload(5, "paid", [(self.box.ct_product_id, "Draft Booster Box", 1)])]
+        self.client.post(reverse("ledger:api_orders_import"))
+        self.box.refresh_from_db()
+        self.assertEqual(self.box.status, Listing.Status.SOLD)
+        self.assertEqual(self.box.item.quantity, 1)
 
 
 class SaleApiTest(LedgerTestCase):
