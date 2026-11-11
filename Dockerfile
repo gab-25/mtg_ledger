@@ -1,3 +1,8 @@
+# The React UI (gab-25/mtg_ledger_ui), pinned to a release: its Release workflow publishes the built app as a
+# scratch image. Bump UI_VERSION to ship a new interface (or override it with --build-arg).
+ARG UI_VERSION=0.3.2
+FROM ghcr.io/gab-25/mtg_ledger_ui:${UI_VERSION} AS ui
+
 FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
@@ -17,10 +22,7 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
-# The React UI (gab-25/mtg_ledger_ui), always the latest release: ADD checks the download on every
-# build, so a new release invalidates the cache.
-ADD https://github.com/gab-25/mtg_ledger_ui/releases/latest/download/mtg-ledger-ui.tar.gz /tmp/ui.tgz
-RUN rm -rf /app/ui_app && mkdir -p /app/ui_app && tar -xzf /tmp/ui.tgz -C /app/ui_app && rm /tmp/ui.tgz
+COPY --from=ui / /app/ui_app
 
 RUN python manage.py collectstatic --noinput
 

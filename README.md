@@ -154,8 +154,10 @@ are created as *To publish*).
   "help_url"?}`, with `code` such as `not_authenticated` (403), `not_found`, `closed` (409: the session was already
   saved), `blocked` (409), `service_missing` (503) or `service_error` (502: CardTrader failed). Actions answer
   `{"messages": [{"level", "text"}]}`, shown by the UI like Django's messages.
-- The Docker image downloads the latest release of the UI at build time: to ship a new version of the interface,
-  publish a release in mtg_ledger_ui and rebuild.
+- The Docker image copies the UI from a pinned release of mtg_ledger_ui's scratch image
+  (`ghcr.io/gab-25/mtg_ledger_ui:X.Y.Z`, `UI_VERSION` in the `Dockerfile`): to ship a new version of the interface,
+  publish a release in mtg_ledger_ui, bump `UI_VERSION` and rebuild. `docker build --build-arg UI_VERSION=X.Y.Z .`
+  tries another release without editing the file.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
   needs both.
