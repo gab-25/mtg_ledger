@@ -1,9 +1,7 @@
-# The React UI (gab-25/mtg_ledger_ui), pinned to a release: bump UI_VERSION to ship a new interface
-# (or override it with --build-arg). Extracted in its own stage so the tarball never lands in the image.
-FROM alpine:3.22 AS ui
-ARG UI_VERSION=v0.3.1
-ADD https://github.com/gab-25/mtg_ledger_ui/releases/download/${UI_VERSION}/mtg-ledger-ui.tar.gz /ui.tgz
-RUN mkdir /ui && tar -xzf /ui.tgz -C /ui
+# The React UI (gab-25/mtg_ledger_ui), pinned to a release: its Release workflow publishes the built app as a
+# scratch image. Bump UI_VERSION to ship a new interface (or override it with --build-arg).
+ARG UI_VERSION=0.3.2
+FROM ghcr.io/gab-25/mtg_ledger_ui:${UI_VERSION} AS ui
 
 FROM python:3.14-slim
 
@@ -24,7 +22,7 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
-COPY --from=ui /ui /app/ui_app
+COPY --from=ui / /app/ui_app
 
 RUN python manage.py collectstatic --noinput
 
