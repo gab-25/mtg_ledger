@@ -62,6 +62,9 @@ class Card(models.Model):
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
     )
+    is_product = models.BooleanField(
+        default=False, help_text="A sealed product or accessory (no condition or foil), not a card"
+    )
 
     class Meta:
         ordering = ["name", "set_code"]

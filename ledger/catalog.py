@@ -106,6 +106,50 @@ def _blueprint_fields(bp, categories):
     }
 
 
+def _mark_product(card, bp):
+    if card.is_product != bp.is_product:
+        card.is_product = bp.is_product
+        card.save(update_fields=["is_product"])
+    return card
+
+
+def card_for_blueprint(bp):
+    """The Ledger card of a catalog blueprint: the one tied to it, an adopted hand-entered row, or a new one."""
+    from .forms import get_or_create_card
+    from .models import Card, SyncLog
+
+    card = Card.objects.filter(ct_blueprint_id=bp.ct_id).first()
+    if card is not None:
+        return _mark_product(card, bp)
+    set_code = bp.expansion.code.upper()
+    if not bp.version and bp.collector_number:
+        # base printing: adopt a hand-entered (name + set) row instead of duplicating it
+        legacy = Card.objects.filter(
+            name__iexact=bp.name, set_code=set_code, collector_number="", ct_blueprint_id__isnull=True
+        ).first()
+        if legacy is not None and not Card.objects.filter(
+            set_code=set_code, collector_number=bp.collector_number
+        ).exists():
+            legacy.ct_blueprint_id = bp.ct_id
+            legacy.collector_number = bp.collector_number
+            legacy.save(update_fields=["ct_blueprint_id", "collector_number"])
+            return _mark_product(legacy, bp)
+    # One Card per printing: a missing number, or one already taken by another blueprint, gets a unique stand-in.
+    number = bp.collector_number or f"CT{bp.ct_id}"
+    taken = Card.objects.filter(set_code=set_code, collector_number=number).first()
+    if taken is not None and taken.ct_blueprint_id not in (None, bp.ct_id):
+        SyncLog.objects.create(
+            level=SyncLog.Level.WARNING,
+            message=f"{bp} shares #{number} with {taken}: stored as #CT{bp.ct_id}"[:300],
+        )
+        number = f"CT{bp.ct_id}"
+    card = get_or_create_card(bp.name, set_code, number)
+    if card.ct_blueprint_id is None:
+        card.ct_blueprint_id = bp.ct_id
+        card.save(update_fields=["ct_blueprint_id"])
+    return _mark_product(card, bp)
+
+
 def sync_expansions(client):
     """Upsert every MTG expansion from CardTrader. Returns how many there are."""
     from .cardtrader import MTG_GAME_ID

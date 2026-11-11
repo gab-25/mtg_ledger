@@ -1,6 +1,7 @@
-"""The collection API (/api/collection/): list with filters and stats, add/edit/remove cards, CSV import and export."""
+"""The collection API (/api/collection/): list with filters and stats, add from the catalog, edit/remove copies,
+CSV import and export."""
 
-from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -11,14 +12,32 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
 from .. import services
-from ..forms import CardItemForm, CsvImportForm
-from ..models import Card, CollectionItem, Condition, Language, Listing, SyncLog
+from ..forms import CatalogItemForm, CsvImportForm, ItemForm
+from ..models import Blueprint, Card, Category, CollectionItem, Condition, Language, Listing, SyncLog
 from ..presentation import item_badge
 from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
 VALUE = ExpressionWrapper(F("price") * F("quantity"), output_field=DecimalField())
-CARD_ITEM = form_body("CardItem", CardItemForm)
+CATALOG_ITEM = form_body("CatalogItem", CatalogItemForm)
+ITEM = form_body("Item", ItemForm)
+
+
+def _blueprint_value(field):
+    """The value of a field of the item's catalog blueprint (None when the card has none)."""
+    return Subquery(Blueprint.objects.filter(ct_id=OuterRef("card__ct_blueprint_id")).values(field)[:1])
+
+
+def _with_category(items):
+    return items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
+                          category_name=_blueprint_value("category__name"))
+
+
+def _category(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _choices(choices):
@@ -41,6 +60,9 @@ def _row(item):
         "id": item.pk,
         "name": card.name,
         "set_code": card.set_code,
+        "is_product": card.is_product,
+        "category_id": item.category_ct_id,
+        "category_name": item.category_name,
         "foil": item.foil,
         "condition": item.condition,
         "condition_label": item.get_condition_display(),
@@ -53,7 +75,7 @@ def _row(item):
 
 def _collection(request):
     user = request.user
-    items = CollectionItem.objects.owned_by(user).select_related("card", "listing")
+    items = _with_category(CollectionItem.objects.owned_by(user).select_related("card", "listing"))
     stats = items.aggregate(total=Sum("quantity"), value=Sum(VALUE))
     stats["unique"] = Card.objects.filter(items__owner=user).distinct().count()
     stats["for_sale"] = (
@@ -67,6 +89,7 @@ def _collection(request):
     foil = params.get("foil") == "1"
     set_code = params.get("set", "")
     cond = params.get("cond", "")
+    category = _category(params.get("category"))
     if q:
         items = items.filter(Q(card__name__icontains=q) | Q(card__set_code__iexact=q))
     if foil:
@@ -75,47 +98,58 @@ def _collection(request):
         items = items.filter(card__set_code=set_code)
     if cond in Condition.values:
         items = items.filter(condition=cond)
+    if category is not None:
+        items = items.filter(category_ct_id=category)
+    owned_blueprints = Card.objects.filter(items__owner=user, ct_blueprint_id__isnull=False).values("ct_blueprint_id")
+    categories = Category.objects.filter(blueprints__ct_id__in=owned_blueprints).distinct().order_by("name", "ct_id")
 
     return Response({
         **page_payload(request, items, _row),
         "stats": stats,
         "sets": list(Card.objects.filter(items__owner=user).values_list("set_code", flat=True)
                      .distinct().order_by("set_code")),
-        "filtered": bool(q or foil or set_code or cond),
+        "categories": [{"id": c.ct_id, "name": c.name} for c in categories],
+        "filtered": bool(q or foil or set_code or cond or category is not None),
     })
 
 
-@doc(TAGS, "The collection (GET: ?q, foil, set, cond, page) or add cards to it (POST)", request=CARD_ITEM)
+@doc(TAGS, "The collection (GET: ?q, foil, set, cond, category, page) or add a catalog product to it (POST)",
+     request=CATALOG_ITEM)
 @extend_schema(methods=["GET"], parameters=[
     query("q", "Name or exact set code"),
     query("foil", "1: foils only", enum=["1"]),
     query("set", "Exact set code"),
     query("cond", "Condition", enum=Condition.values),
+    query("category", "CardTrader category id of the item's catalog product"),
     PAGE,
 ])
 @api_view(["GET", "POST"])
 def collection(request):
     if request.method == "GET":
         return _collection(request)
-    form = CardItemForm(request.data, owner=request.user)
+    form = CatalogItemForm(request.data, owner=request.user)
     if not form.is_valid():
         raise form_errors(form)
-    item = form.save()
-    return messages_response(msg("success", f"Added {item.quantity}× {item.card.name}."),
+    item, merged = form.save()
+    added = form.cleaned_data["quantity"]
+    if merged:
+        return messages_response(msg("success", f"Added {added}× {item.card.name} to the copies you already had."),
+                                 id=item.pk)
+    return messages_response(msg("success", f"Added {added}× {item.card.name}."),
                              status=status.HTTP_201_CREATED, id=item.pk)
 
 
-@doc(TAGS, "One collection item: read (GET), change (PUT) or remove (DELETE)", request=CARD_ITEM)
+@doc(TAGS, "One collection item: read (GET), change its copies (PUT) or remove it (DELETE)", request=ITEM)
 @extend_schema(methods=["GET"], operation_id="collection_item_retrieve")
 @api_view(["GET", "PUT", "DELETE"])
 def item(request, pk):
-    obj = get_object_or_404(CollectionItem.objects.owned_by(request.user).select_related("card"), pk=pk)
+    obj = get_object_or_404(_with_category(CollectionItem.objects.owned_by(request.user).select_related("card")), pk=pk)
     if request.method == "DELETE":
         name = obj.card.name
         obj.delete()
         return messages_response(msg("success", f"Removed {name} from the collection."))
     if request.method == "PUT":
-        form = CardItemForm(request.data, instance=obj)
+        form = ItemForm(request.data, instance=obj)
         if not form.is_valid():
             raise form_errors(form)
         form.save()
@@ -126,6 +160,9 @@ def item(request, pk):
         "name": card.name,
         "set_code": card.set_code,
         "collector_number": card.collector_number,
+        "is_product": card.is_product,
+        "category_id": obj.category_ct_id,
+        "category_name": obj.category_name,
         "condition": obj.condition,
         "language": obj.language,
         "foil": obj.foil,

@@ -32,13 +32,18 @@ class PrintingModelTest(LedgerTestCase):
 
 
 class PrintingFormCsvTest(LedgerTestCase):
-    def test_form_with_number_targets_printing(self):
+    def test_catalog_add_targets_printing(self):
+        from . import catalog
+        from .models import Expansion
+
+        client = self.ct.client()
+        catalog.sync_expansions(client)
+        catalog.ensure_blueprints(client, Expansion.objects.get(ct_id=11))
         resp = self.client.post(reverse("ledger:api_collection"), {
-            "name": "Fable of the Mirror-Breaker", "set_code": "neo", "collector_number": "0356",
-            "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00",
+            "blueprint": 1101, "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00",
         }, content_type="application/json")
         self.assertEqual(resp.status_code, 201)
-        self.assertTrue(Card.objects.filter(set_code="NEO", collector_number="356").exists())
+        self.assertTrue(Card.objects.filter(set_code="NEO", collector_number="356", ct_blueprint_id=1101).exists())
 
     def test_csv_number_column_roundtrip(self):
         upload = SimpleUploadedFile("c.csv", b"name,set,number,quantity\nFable of the Mirror-Breaker,neo,141,2\n")
