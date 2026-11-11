@@ -96,6 +96,9 @@ class CardTraderClient:
     def expansions(self):
         return self._get("/expansions")
 
+    def categories(self):
+        return self._get("/categories", game_id=MTG_GAME_ID)
+
     def blueprints(self, expansion_id):
         return self._get("/blueprints/export", expansion_id=expansion_id)
 

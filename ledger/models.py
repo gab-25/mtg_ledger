@@ -344,6 +344,25 @@ class Expansion(models.Model):
         return f"{self.code.upper()} · {self.name}"
 
 
+# CardTrader categories that are cards (collector number, condition, foil): Single Card, Token/Emblem, Oversized.
+# Every other category (sealed, accessories, ...) is a product.
+CARD_CATEGORY_IDS = frozenset({1, 2, 3})
+
+
+class Category(models.Model):
+    """A CardTrader MTG product category (local catalog copy): single cards, booster boxes, playmats, ..."""
+
+    ct_id = models.PositiveIntegerField("CardTrader category", unique=True)
+    name = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "categories"
+
+    def __str__(self):
+        return self.name or f"Category {self.ct_id}"
+
+
 class Blueprint(models.Model):
     """A CardTrader blueprint: one printing of a card (local catalog copy)."""
 
@@ -354,6 +373,10 @@ class Blueprint(models.Model):
     version = models.CharField(max_length=80, blank=True)
     rarity = models.CharField(max_length=40, blank=True)
     image_url = models.URLField(max_length=500, blank=True)
+    category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL, related_name="blueprints")
+    editable_properties = models.JSONField(
+        null=True, blank=True, help_text="Names of the properties CardTrader accepts when selling it; empty if unknown",
+    )
     cm_price = models.ForeignKey(
         "CardmarketPrice", null=True, blank=True, on_delete=models.DO_NOTHING, db_constraint=False,
         related_name="blueprints", verbose_name="Cardmarket product",
@@ -362,6 +385,15 @@ class Blueprint(models.Model):
 
     class Meta:
         ordering = ["expansion__name", "name"]
+
+    @property
+    def is_product(self):
+        """Sealed product or accessory rather than a card; a blueprint not yet categorised counts as a card."""
+        return self.category_id is not None and self.category.ct_id not in CARD_CATEGORY_IDS
+
+    def accepts(self, prop):
+        """Whether CardTrader accepts this property for it; unknown properties are assumed accepted."""
+        return self.editable_properties is None or prop in self.editable_properties
 
     def __str__(self):
         number = f" #{self.collector_number}" if self.collector_number else ""

@@ -16,6 +16,14 @@ from .cardtrader import CardTraderClient, CardTraderError, money
 from .models import Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
+LANGUAGE_PROP = {"name": "mtg_language", "type": "string", "default_value": "en", "possible_values": ["en", "it"]}
+SINGLE_PROPS = [
+    {"name": "condition", "type": "string", "default_value": "Near Mint", "possible_values": ["Near Mint", "Played"]},
+    LANGUAGE_PROP,
+    {"name": "mtg_foil", "type": "boolean", "default_value": "false", "possible_values": [True, False]},
+]
+
+
 class FakeCardTrader:
     """In-memory stand-in for the CardTrader API, served through httpx.MockTransport."""
 
@@ -28,15 +36,24 @@ class FakeCardTrader:
             {"id": 99, "game_id": 5, "code": "mh2", "name": "Not MTG"},
         ]
         self.blueprints = {
-            10: [{"id": 1001, "name": "Ragavan, Nimble Pilferer", "version": None, "fixed_properties": {"collector_number": "138"}},
-                 {"id": 1002, "name": "Solitude", "version": None, "fixed_properties": {"collector_number": "32"}},
-                 {"id": 1003, "name": "Urza’s Saga", "version": None, "fixed_properties": {"collector_number": "259"}},
-                 {"id": 1004, "name": "Endurance", "version": None, "fixed_properties": {"collector_number": "157"}}],
-            11: [{"id": 1101, "name": "Fable of the Mirror-Breaker", "version": "showcase", "fixed_properties": {"collector_number": "356"}},
-                 {"id": 1100, "name": "Fable of the Mirror-Breaker", "version": None, "fixed_properties": {"collector_number": "141"}}],
-            12: [{"id": 1201, "name": "Counterspell", "version": None, "fixed_properties": {"collector_number": "045"}}],
-            13: [{"id": 1301, "name": "Sheoldred, the Apocalypse", "version": None, "fixed_properties": {"collector_number": "107"}}],
+            10: [{"id": 1001, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Ragavan, Nimble Pilferer", "version": None, "fixed_properties": {"collector_number": "138"}},
+                 {"id": 1002, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Solitude", "version": None, "fixed_properties": {"collector_number": "32"}},
+                 {"id": 1003, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Urza’s Saga", "version": None, "fixed_properties": {"collector_number": "259"}},
+                 {"id": 1004, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Endurance", "version": None, "fixed_properties": {"collector_number": "157"}}],
+            11: [{"id": 1101, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Fable of the Mirror-Breaker", "version": "showcase", "fixed_properties": {"collector_number": "356"}},
+                 {"id": 1100, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Fable of the Mirror-Breaker", "version": None, "fixed_properties": {"collector_number": "141"}}],
+            12: [{"id": 1201, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Counterspell", "version": None, "fixed_properties": {"collector_number": "045"}}],
+            13: [{"id": 1301, "category_id": 1, "editable_properties": SINGLE_PROPS, "name": "Sheoldred, the Apocalypse", "version": None, "fixed_properties": {"collector_number": "107"}},
+                 {"id": 1390, "category_id": 4, "editable_properties": [LANGUAGE_PROP],
+                  "name": "Dominaria United Draft Booster Box", "version": None, "fixed_properties": {}},
+                 {"id": 1391, "category_id": 40, "editable_properties": [],
+                  "name": "Dominaria United Playmat", "version": None, "fixed_properties": {}}],
         }
+        self.categories = [
+            {"id": 1, "game_id": 1, "name": "Magic Single Card"},
+            {"id": 4, "game_id": 1, "name": "Booster Boxes"},
+            {"id": 40, "game_id": 1, "name": "Playmats"},
+        ]
         self.products = {}
         self.orders = []
         self.next_product = 5000
@@ -57,6 +74,8 @@ class FakeCardTrader:
             return httpx.Response(200, json={"id": 1, "name": "ledger", "user_id": 77})
         if path == "/expansions":
             return httpx.Response(200, json=self.expansions)
+        if path == "/categories":
+            return httpx.Response(200, json=[c for c in self.categories if c["game_id"] == int(params["game_id"])])
         if path == "/blueprints/export":
             if int(params["expansion_id"]) in self.fail_export:
                 return httpx.Response(500, json={"error": "boom"})

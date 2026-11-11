@@ -14,8 +14,8 @@ import httpx
 
 from . import services
 from .cardtrader import MTG_GAME_ID, CardTraderError
-from .catalog import _blueprint_fields, normalize_number
-from .models import Blueprint, Card, CardmarketPrice, Expansion, SyncLog
+from .catalog import _blueprint_fields, category_pks, normalize_number
+from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, SyncLog
 
 PRICE_GUIDE_URL = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json"
 USER_AGENT = "mtg-ledger/0.1"
@@ -182,6 +182,10 @@ def sync(cm_client, ct_client):
 
     prices, guide_date = _fetch_guide(cm_client)
     expansions, exports, failed = _fetch_catalog(ct_client)
+    try:
+        categories = ct_client.categories() or []
+    except CardTraderError as exc:
+        raise CardmarketError(f"CardTrader categories: {exc}") from exc
     now = timezone.now()
     try:
         expansion_objs = [Expansion(ct_id=e["id"], code=e["code"].lower(), name=e["name"]) for e in expansions]
@@ -189,14 +193,24 @@ def sync(cm_client, ct_client):
             Expansion.objects.bulk_create(
                 expansion_objs, update_conflicts=True, unique_fields=["ct_id"], update_fields=["code", "name"],
             )
+            Category.objects.bulk_create(
+                [Category(ct_id=c["id"], name=c.get("name") or "") for c in categories],
+                update_conflicts=True, unique_fields=["ct_id"], update_fields=["name"],
+            )
             pk_by_ct = dict(Expansion.objects.values_list("ct_id", "pk"))
+            category_by_ct = category_pks(bp.get("category_id") for bps in exports.values() for bp in bps)
             objs = {}
             for exp_ct_id, bps in exports.items():
                 for bp in bps:
-                    objs[bp["id"]] = Blueprint(ct_id=bp["id"], expansion_id=pk_by_ct[exp_ct_id], **_blueprint_fields(bp))
+                    objs[bp["id"]] = Blueprint(
+                        ct_id=bp["id"], expansion_id=pk_by_ct[exp_ct_id], **_blueprint_fields(bp, category_by_ct),
+                    )
             Blueprint.objects.bulk_create(
                 objs.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["ct_id"],
-                update_fields=["expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price"],
+                update_fields=[
+                    "expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price",
+                    "category", "editable_properties",
+                ],
             )
             Expansion.objects.filter(ct_id__in=exports.keys()).update(blueprints_synced_at=now)
             CardmarketPrice.objects.bulk_create(

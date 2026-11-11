@@ -74,8 +74,24 @@ def merge_cards(source, target):
     return True
 
 
-def _blueprint_fields(bp):
-    """Map a /blueprints/export entry to Blueprint fields (shape to re-check against the live API)."""
+def category_pks(ct_ids):
+    """{CardTrader category id: Category pk} for ct_ids; unknown ids get a nameless row until sync_categories."""
+    from .models import Category
+
+    ct_ids = {i for i in ct_ids if i is not None}
+    Category.objects.bulk_create([Category(ct_id=i) for i in ct_ids], ignore_conflicts=True)
+    return dict(Category.objects.filter(ct_id__in=ct_ids).values_list("ct_id", "pk"))
+
+
+def _editable_properties(bp):
+    props = bp.get("editable_properties")
+    if props is None:
+        return None
+    return [p["name"] for p in props if isinstance(p, dict) and p.get("name")]
+
+
+def _blueprint_fields(bp, categories):
+    """Map a /blueprints/export entry to Blueprint fields; categories is category_pks() of the export."""
     fixed = bp.get("fixed_properties") or {}
     image = bp.get("image_url") or ((bp.get("image") or {}).get("url") if isinstance(bp.get("image"), dict) else "")
     return {
@@ -85,6 +101,8 @@ def _blueprint_fields(bp):
         "rarity": fixed.get("mtg_rarity") or "",
         "image_url": (image or "")[:500],
         "cm_price_id": next(iter(bp.get("card_market_ids") or []), None),
+        "category_id": categories.get(bp.get("category_id")),
+        "editable_properties": _editable_properties(bp),
     }
 
 
@@ -102,6 +120,17 @@ def sync_expansions(client):
     return count
 
 
+def sync_categories(client):
+    """Upsert every MTG category from CardTrader. Returns how many there are."""
+    from .models import Category
+
+    count = 0
+    for c in client.categories() or []:
+        Category.objects.update_or_create(ct_id=c["id"], defaults={"name": c.get("name") or ""})
+        count += 1
+    return count
+
+
 def ensure_blueprints(client, expansion, *, force=False):
     """Load an expansion's blueprints once (or again with force). Returns how many were stored."""
     from django.utils import timezone
@@ -111,9 +140,11 @@ def ensure_blueprints(client, expansion, *, force=False):
     if expansion.blueprints_synced_at and not force:
         return 0
     count = 0
-    for bp in client.blueprints(expansion.ct_id):
+    exported = client.blueprints(expansion.ct_id)
+    categories = category_pks(bp.get("category_id") for bp in exported)
+    for bp in exported:
         Blueprint.objects.update_or_create(
-            ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp)}
+            ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp, categories)}
         )
         count += 1
     expansion.blueprints_synced_at = timezone.now()
