@@ -3,10 +3,9 @@ import json
 import httpx
 from django.test import SimpleTestCase
 
-from .openrouter import OpenRouterClient, OpenRouterError
+from .openrouter import SCHEMA, OpenRouterClient, OpenRouterError
 
-READ = {"name": "Counterspell", "set_code": "DMR", "collector_number": "045", "language": "IT", "foil": True,
-        "type_line": "Instant", "color": "U"}
+READ = {"name": "Counterspell", "set_code": "DMR", "collector_number": "045", "language": "IT", "foil": True}
 
 
 def completion(content):
@@ -27,7 +26,9 @@ class RecognizeTest(SimpleTestCase):
 
         rec = self.client_for(handler).recognize_card(b"\xff\xd8jpeg")
         self.assertEqual((rec.name, rec.set_code, rec.collector_number), ("Counterspell", "dmr", "045"))
-        self.assertEqual((rec.language, rec.foil, rec.type_line, rec.color), ("IT", True, "Instant", "U"))
+        self.assertEqual((rec.language, rec.foil), ("IT", True))
+        self.assertFalse(hasattr(rec, "color") or hasattr(rec, "type_line"))
+        self.assertNotIn("type_line", json.dumps(seen["body"]))
         self.assertEqual(seen["body"]["model"], "test/model")
         self.assertIn("image_url", json.dumps(seen["body"]))
         self.assertEqual(seen["auth"], "Bearer key")
@@ -53,7 +54,10 @@ class RecognizeTest(SimpleTestCase):
         with self.assertRaises(OpenRouterError):
             self.client_for(handler).recognize_card(b"x")
 
-    def test_unsupported_language_and_color_blank(self):
-        data = dict(READ, language="zh-TW", color="purple")
+    def test_unsupported_language_blank(self):
+        data = dict(READ, language="zh-TW")
         rec = self.client_for(lambda r: httpx.Response(200, json=completion(json.dumps(data)))).recognize_card(b"x")
-        self.assertEqual((rec.language, rec.color), ("", ""))
+        self.assertEqual(rec.language, "")
+
+    def test_schema_has_no_color_or_type(self):
+        self.assertEqual(SCHEMA["required"], ["name", "set_code", "collector_number", "language", "foil"])

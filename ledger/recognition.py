@@ -13,15 +13,13 @@ MAX_CANDIDATES = 5
 
 @dataclass
 class Recognition:
-    """What the model read. language: a Ledger code or "" (unreadable/unsupported); color: a Color code or ""."""
+    """What the model read. language: a Ledger code or "" (unreadable/unsupported)."""
 
     name: str = ""
     set_code: str = ""
     collector_number: str = ""
     language: str = ""
     foil: bool = False
-    type_line: str = ""
-    color: str = ""
 
 
 @dataclass

@@ -4,10 +4,9 @@ from django.db import IntegrityError, transaction
 from django.db.models import Max, Q
 from django.db.models.functions import Greatest
 
-from . import pricing
+from . import catalog, pricing
 from .cardtrader import CardTraderError
-from .forms import get_or_create_card
-from .models import Card, CollectionItem, Color, Listing, ScanCapture, ScanLine, ScanSession, SyncLog
+from .models import CollectionItem, Listing, ScanCapture, ScanLine, ScanSession, SyncLog
 
 UNSET = object()
 
@@ -75,10 +74,9 @@ def _merge_or_save(line):
     return twin
 
 
-def _add_certain(session, client, blueprint, language, foil, *, type_line="", color=""):
+def _add_certain(session, client, blueprint, language, foil):
     line = ScanLine(
-        session=session, blueprint=blueprint, language=language, foil=foil,
-        condition=session.default_condition, type_line=type_line, color=color,
+        session=session, blueprint=blueprint, language=language, foil=foil, condition=session.default_condition,
     )
     twin = _twin(line)
     if twin is not None:
@@ -112,15 +110,12 @@ def add_capture(session, client, rec, m, *, frame, capture_id="", capture=None):
         if not created:
             return capture.line, False
     if m.blueprint is not None:
-        line, merged = _add_certain(
-            session, client, m.blueprint, rec.language, rec.foil, type_line=rec.type_line, color=rec.color,
-        )
+        line, merged = _add_certain(session, client, m.blueprint, rec.language, rec.foil)
     else:
         line = ScanLine.objects.create(
             session=session, language=rec.language, foil=rec.foil, condition=session.default_condition,
             needs_confirmation=True, candidates=[b.ct_id for b in m.candidates], frame=frame,
             read_name=rec.name.strip()[:200],
-            type_line=rec.type_line, color=rec.color,
         )
         merged = False
     if capture is not None:
@@ -178,38 +173,7 @@ def confirm_line(line, client, blueprint, language):
 
 
 def _card_for(line):
-    bp = line.blueprint
-    card = Card.objects.filter(ct_blueprint_id=bp.ct_id).first()
-    if card is not None:
-        return card
-    set_code = bp.expansion.code.upper()
-    defaults = {"type_line": line.type_line, "color": line.color or Color.COLORLESS}
-    if not bp.version and bp.collector_number:
-        # base printing: adopt a hand-entered (name + set) row instead of duplicating it
-        legacy = Card.objects.filter(
-            name__iexact=bp.name, set_code=set_code, collector_number="", ct_blueprint_id__isnull=True
-        ).first()
-        if legacy is not None and not Card.objects.filter(
-            set_code=set_code, collector_number=bp.collector_number
-        ).exists():
-            legacy.ct_blueprint_id = bp.ct_id
-            legacy.collector_number = bp.collector_number
-            legacy.save(update_fields=["ct_blueprint_id", "collector_number"])
-            return legacy
-    # One Card per printing: a missing number, or one already taken by another blueprint, gets a unique stand-in.
-    number = bp.collector_number or f"CT{bp.ct_id}"
-    taken = Card.objects.filter(set_code=set_code, collector_number=number).first()
-    if taken is not None and taken.ct_blueprint_id not in (None, bp.ct_id):
-        SyncLog.objects.create(
-            level=SyncLog.Level.WARNING,
-            message=f"{bp} shares #{number} with {taken}: stored as #CT{bp.ct_id}"[:300],
-        )
-        number = f"CT{bp.ct_id}"
-    card = get_or_create_card(bp.name, set_code, number, **defaults)
-    if card.ct_blueprint_id is None:
-        card.ct_blueprint_id = bp.ct_id
-        card.save(update_fields=["ct_blueprint_id"])
-    return card
+    return catalog.card_for_blueprint(line.blueprint)
 
 
 def _list(item, line):

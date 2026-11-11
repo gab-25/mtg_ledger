@@ -8,7 +8,7 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from . import cardmarket, services
-from .models import Blueprint, Card, CardmarketPrice, Expansion, SyncLog
+from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, SyncLog
 from .tests import FakeCardTrader
 
 GUIDE = {
@@ -105,12 +105,27 @@ class SyncTest(CardmarketTestCase):
     def test_sync_loads_every_mtg_expansion_and_blueprint(self):
         result = self.sync()
         self.assertEqual(set(Expansion.objects.values_list("code", flat=True)), {"mh2", "neo", "dmr", "dmu"})
-        self.assertEqual(Blueprint.objects.count(), 8)
+        self.assertEqual(Blueprint.objects.count(), 10)
         self.assertFalse(Expansion.objects.filter(blueprints_synced_at__isnull=True).exists())
         rag = Blueprint.objects.get(ct_id=1001)
         self.assertEqual((rag.name, rag.expansion.code, rag.collector_number), ("Ragavan, Nimble Pilferer", "mh2", "138"))
         self.assertEqual((rag.cm_price_id, rag.image_url), (555001, "https://img/1001.jpg"))
-        self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 8, 2))
+        self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 10, 2))
+
+    def test_sync_stores_categories_and_properties(self):
+        self.sync()
+        self.assertEqual(Category.objects.get(ct_id=40).name, "Playmats")
+        box = Blueprint.objects.get(ct_id=1390)
+        self.assertEqual((box.category.ct_id, box.editable_properties), (4, ["mtg_language"]))
+        self.assertTrue(box.is_product)
+        self.assertFalse(Blueprint.objects.get(ct_id=1001).is_product)
+
+    def test_sync_marks_existing_cards_as_products(self):
+        card = Card.objects.create(name="Dominaria United Draft Booster Box", set_code="DMU",
+                                   collector_number="CT1390", ct_blueprint_id=1390)
+        self.sync()
+        card.refresh_from_db()
+        self.assertTrue(card.is_product)
 
     def test_long_collector_number_stored(self):
         # CardTrader numbers for some promo/anniversary printings, e.g. "10-013T/012-019T"
@@ -140,7 +155,7 @@ class SyncTest(CardmarketTestCase):
         self.guide.guide["priceGuides"][0]["trend"] = 50.0
         self.ct.blueprints[10][0]["name"] = "Ragavan (renamed)"
         self.sync()
-        self.assertEqual(Blueprint.objects.count(), 8)
+        self.assertEqual(Blueprint.objects.count(), 10)
         self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("50.00"))
         self.assertEqual(Blueprint.objects.get(ct_id=1001).name, "Ragavan (renamed)")
 
@@ -200,7 +215,7 @@ class SyncTest(CardmarketTestCase):
         self.assertEqual(log.level, SyncLog.Level.OK)
         self.assertEqual(
             log.message,
-            "Cardmarket: 4 expansions, 8 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
+            "Cardmarket: 4 expansions, 10 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
         )
 
     def test_run_sync_mentions_failed_expansions(self):

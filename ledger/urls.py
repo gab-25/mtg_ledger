@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .api import cards as cards_api
+from .api import catalog as catalog_api
 from .api import collection as collection_api
 from .api import orders as orders_api
 from .api import sale as sale_api
@@ -19,7 +19,8 @@ urlpatterns = [
     path("api/listings/publish/", sale_api.publish, name="api_publish"),
     path("api/listings/match-prices/", sale_api.match_prices, name="api_match_prices"),
     path("api/listings/<int:item_pk>/", sale_api.listing, name="api_listing"),
-    path("api/cards/", cards_api.cards, name="api_cards"),
+    path("api/catalog/", catalog_api.catalog, name="api_catalog"),
+    path("api/catalog/categories/", catalog_api.categories, name="api_catalog_categories"),
     path("api/orders/", orders_api.orders, name="api_orders"),
     path("api/orders/import/", orders_api.import_orders, name="api_orders_import"),
     path("api/orders/<int:pk>/", orders_api.order, name="api_order"),

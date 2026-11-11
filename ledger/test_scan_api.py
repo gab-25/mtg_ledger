@@ -18,7 +18,7 @@ from django.utils.dateparse import parse_datetime
 from . import catalog, services
 from .api.scan import SESSION_LIST_LIMIT
 from .api.serializers import MAX_FRAME_BYTES
-from .forms import CardItemForm, ListingForm
+from .forms import CatalogItemForm, ItemForm, ListingForm
 from .cardtrader import CardTraderError
 from .models import Blueprint, CollectionItem, Expansion, MarketPrice, ScanCapture, ScanLine, ScanSession
 from .openrouter import OpenRouterError
@@ -671,10 +671,11 @@ class SchemaTest(LedgerTestCase):
             return {kind: set(components[c["schema"]["$ref"].rsplit("/", 1)[1]]["properties"])
                     for kind, c in content.items()}
 
-        card = set(CardItemForm.base_fields)
         listing = set(ListingForm.base_fields)
-        self.assertEqual(body("/api/collection/", "post")["application/json"], card)
-        self.assertEqual(body("/api/collection/{id}/", "put")["application/json"], card)
+        self.assertEqual(body("/api/collection/", "post")["application/json"], set(CatalogItemForm.base_fields))
+        self.assertEqual(body("/api/collection/{id}/", "put")["application/json"], set(ItemForm.base_fields))
+        self.assertIn("blueprint", CatalogItemForm.base_fields)
+        self.assertNotIn("name", ItemForm.base_fields)
         self.assertEqual(body("/api/collection/import/", "post"), {"multipart/form-data": {"file"}})
         self.assertEqual(body("/api/listings/{item_pk}/", "put")["application/json"], listing)
         self.assertEqual(body("/api/orders/{id}/ship/", "post")["application/json"], {"tracking_code", "save_tracking"})
@@ -690,10 +691,10 @@ class SchemaTest(LedgerTestCase):
         def query(path):
             return {p["name"] for p in schema["paths"][path]["get"].get("parameters", []) if p["in"] == "query"}
 
-        self.assertEqual(query("/api/collection/"), {"q", "color", "foil", "set", "cond", "page"})
+        self.assertEqual(query("/api/collection/"), {"q", "foil", "set", "cond", "category", "page"})
         self.assertEqual(query("/api/listings/"), {"status"})
         self.assertEqual(query("/api/orders/"), {"tab"})
-        self.assertEqual(query("/api/cards/"), {"q", "set", "number", "owned", "page"})
+        self.assertEqual(query("/api/catalog/"), {"q", "set", "number", "category", "owned", "page"})
         self.assertNotIn("parameters", schema["paths"]["/api/collection/"]["post"])
 
     def test_schema_version_is_the_project_version(self):

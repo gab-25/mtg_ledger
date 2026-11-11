@@ -26,9 +26,9 @@ from .openrouter import OpenRouterClient
 from .catalog import blueprint_number, clashing_owners, merge_cards, normalize_number
 from .forms import get_or_create_card
 from .models import (
+    Blueprint,
     Card,
     CollectionItem,
-    Color,
     Condition,
     Language,
     Listing,
@@ -39,7 +39,7 @@ from .models import (
     SyncService,
 )
 
-CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price", "number"]
+CSV_FIELDS = ["name", "set", "condition", "language", "foil", "quantity", "price", "number"]
 CARDTRADER = "CardTrader"
 
 
@@ -169,8 +169,6 @@ def export_csv(items, stream):
         writer.writerow([
             item.card.name,
             item.card.set_code,
-            item.card.type_line,
-            item.card.color,
             item.condition,
             item.language,
             "1" if item.foil else "0",
@@ -224,8 +222,6 @@ def import_csv(uploaded_file, owner):
                 row["name"],
                 row["set"].upper(),
                 normalize_number(row.get("number", "")),
-                type_line=row.get("type", ""),
-                color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
                 owner=owner,
@@ -319,14 +315,32 @@ def resolve_blueprints(client, cards):
 
 # --- Listings ------------------------------------------------------------
 
-def product_payload(listing):
+def _blueprints(listings):
+    """{ct_id: Blueprint} of the listings' cards, to know what CardTrader accepts for each."""
+    ids = {l.item.card.ct_blueprint_id for l in listings if l.item.card.ct_blueprint_id}
+    return {bp.ct_id: bp for bp in Blueprint.objects.filter(ct_id__in=ids)}
+
+
+def _accepts(blueprint, prop):
+    return blueprint is None or blueprint.accepts(prop)
+
+
+def product_payload(listing, blueprint=None):
+    """The CardTrader product for a listing; products (sealed, accessories) send only what their blueprint takes."""
     item = listing.item
-    properties = {
-        "condition": CONDITION_TO_CT[item.condition],
-        "mtg_language": LANGUAGE_TO_CT[item.language],
-    }
-    if item.foil:
-        properties["mtg_foil"] = True
+    if item.card.is_product:
+        properties = {}
+        if _accepts(blueprint, "mtg_language"):
+            properties["mtg_language"] = LANGUAGE_TO_CT[item.language]
+        if blueprint is not None and blueprint.accepts("condition"):
+            properties["condition"] = CONDITION_TO_CT[item.condition]
+    else:
+        properties = {
+            "condition": CONDITION_TO_CT[item.condition],
+            "mtg_language": LANGUAGE_TO_CT[item.language],
+        }
+        if item.foil:
+            properties["mtg_foil"] = True
     payload = {
         "price": float(listing.price),
         "quantity": listing.quantity,
@@ -382,7 +396,8 @@ def publish_pending(user):
         for batch, call in ((to_create, client.bulk_create), (to_update, client.bulk_update)):
             if not batch:
                 continue
-            outcomes = call([product_payload(l) for l in batch])
+            blueprints = _blueprints(batch)
+            outcomes = call([product_payload(l, blueprints.get(l.item.card.ct_blueprint_id)) for l in batch])
             for listing, outcome in zip(batch, outcomes):
                 if outcome.get("result") in ("ok", "warning") and outcome.get("product_id"):
                     listing.ct_product_id = outcome["product_id"]
@@ -415,8 +430,9 @@ def remove_listing(listing):
 
 
 def _market_price(products, condition, my_user_id):
+    """Cheapest offer of someone else, preferring the same condition (condition None: any offer)."""
     others = [p for p in products if (p.get("user") or {}).get("id") != my_user_id]
-    same = [p for p in others if (p.get("properties_hash") or {}).get("condition") == condition]
+    same = [p for p in others if condition and (p.get("properties_hash") or {}).get("condition") == condition]
     pool = same or others
     prices = [money(p.get("price")) for p in pool if p.get("price")]
     return min(prices) if prices else None
@@ -428,15 +444,22 @@ MARKETPLACE_PAUSE = 0.11  # marketplace endpoint: max 10 requests per second
 def refresh_market_prices(client, listings):
     """Update market_price from the cheapest comparable offer on CardTrader."""
     my_user_id = (client.info() or {}).get("user_id")
+    blueprints = _blueprints(listings)
     updated = 0
     for listing in listings:
         item = listing.item
         if not item.card.ct_blueprint_id:
             continue
-        products = client.marketplace_products(
-            item.card.ct_blueprint_id, language=LANGUAGE_TO_CT[item.language], foil=item.foil
-        )
-        price = _market_price(products, CONDITION_TO_CT[item.condition], my_user_id)
+        if item.card.is_product:  # no foil nor condition; a language only when CardTrader takes one
+            blueprint = blueprints.get(item.card.ct_blueprint_id)
+            language = LANGUAGE_TO_CT[item.language] if _accepts(blueprint, "mtg_language") else None
+            products = client.marketplace_products(item.card.ct_blueprint_id, language=language)
+            price = _market_price(products, None, my_user_id)
+        else:
+            products = client.marketplace_products(
+                item.card.ct_blueprint_id, language=LANGUAGE_TO_CT[item.language], foil=item.foil
+            )
+            price = _market_price(products, CONDITION_TO_CT[item.condition], my_user_id)
         if price is not None and price != listing.market_price:
             listing.market_price = price
             listing.save(update_fields=["market_price", "updated_at"])

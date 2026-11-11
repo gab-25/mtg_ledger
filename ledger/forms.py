@@ -1,7 +1,9 @@
 from django import forms
+from django.db.models import F
+from django.db.models.functions import Now
 
-from .catalog import normalize_number
-from .models import Card, CollectionItem, Color, Listing
+from . import catalog
+from .models import Blueprint, Card, CollectionItem, Condition, Language, Listing
 
 
 def get_or_create_card(name, set_code, collector_number="", **defaults):
@@ -15,52 +17,59 @@ def get_or_create_card(name, set_code, collector_number="", **defaults):
     return card
 
 
-class CardItemForm(forms.ModelForm):
-    """Adds or edits a collection item together with the card printing it refers to."""
+PRODUCT_CONDITION = Condition.NEAR_MINT  # stored on products, which have no condition on CardTrader
 
-    name = forms.CharField(max_length=200)
-    set_code = forms.CharField(label="Set", max_length=10)
-    collector_number = forms.CharField(label="Collector number", max_length=40, required=False)
-    type_line = forms.CharField(label="Type", max_length=200, required=False)
-    color = forms.ChoiceField(choices=Color.choices, initial=Color.COLORLESS)
 
-    field_order = ["name", "set_code", "collector_number", "type_line", "color", "condition", "language", "foil", "quantity", "price"]
+class CatalogItemForm(forms.Form):
+    """Adds copies of a catalog product (card, sealed or accessory) to the owner's collection."""
+
+    blueprint = forms.IntegerField(label="CardTrader blueprint", min_value=1)
+    condition = forms.ChoiceField(choices=Condition.choices, initial=Condition.NEAR_MINT, required=False)
+    language = forms.ChoiceField(choices=Language.choices, initial=Language.EN, required=False)
+    foil = forms.BooleanField(required=False)
+    quantity = forms.IntegerField(min_value=1, initial=1)
+    price = forms.DecimalField(label="Unit price", max_digits=10, decimal_places=2, min_value=0)
+
+    def __init__(self, *args, owner, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.owner = owner
+
+    def clean_blueprint(self):
+        bp = Blueprint.objects.select_related("expansion", "category").filter(ct_id=self.cleaned_data["blueprint"]).first()
+        if bp is None:
+            raise forms.ValidationError("Unknown catalog product.")
+        return bp
+
+    def save(self):
+        """(item, merged): an identical stack of the owner's gets the copies, keeping its price."""
+        data = self.cleaned_data
+        bp = data["blueprint"]
+        condition, language, foil = data["condition"] or Condition.NEAR_MINT, data["language"] or Language.EN, data["foil"]
+        if bp.is_product:
+            condition, foil = PRODUCT_CONDITION, False
+            if not bp.accepts("mtg_language"):
+                language = Language.EN
+        card = catalog.card_for_blueprint(bp)
+        stack = {"owner": self.owner, "card": card, "condition": condition, "language": language, "foil": foil}
+        # Older rows may hold duplicate stacks (the free-text form never merged): the oldest gets the copies.
+        item = CollectionItem.objects.filter(**stack).order_by("pk").first()
+        if item is None:
+            return CollectionItem.objects.create(**stack, quantity=data["quantity"], price=data["price"]), False
+        CollectionItem.objects.filter(pk=item.pk).update(quantity=F("quantity") + data["quantity"], updated_at=Now())
+        item.refresh_from_db()
+        return item, True
+
+
+class ItemForm(forms.ModelForm):
+    """Edits the copies of a collection item; the product they are copies of never changes."""
 
     class Meta:
         model = CollectionItem
         fields = ["condition", "language", "foil", "quantity", "price"]
 
-    def __init__(self, *args, owner=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        if owner is not None and not self.instance.pk:
-            self.instance.owner = owner
-        if self.instance.pk:
-            card = self.instance.card
-            self.initial.update(
-                name=card.name, set_code=card.set_code, collector_number=card.collector_number,
-                type_line=card.type_line, color=card.color,
-            )
-
-    def clean_set_code(self):
-        return self.cleaned_data["set_code"].strip().upper()
-
-    def clean_collector_number(self):
-        return normalize_number(self.cleaned_data["collector_number"])
-
     def save(self, commit=True):
-        data = self.cleaned_data
-        card = get_or_create_card(
-            data["name"].strip(), data["set_code"], data["collector_number"],
-            type_line=data["type_line"], color=data["color"],
-        )
-        changed = False
-        for attr in ("type_line", "color"):
-            if data[attr] and getattr(card, attr) != data[attr]:
-                setattr(card, attr, data[attr])
-                changed = True
-        if changed:
-            card.save()
-        self.instance.card = card
+        if self.instance.card.is_product:
+            self.instance.condition, self.instance.foil = PRODUCT_CONDITION, False
         return super().save(commit=commit)
 
 

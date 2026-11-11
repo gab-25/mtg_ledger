@@ -1,13 +1,13 @@
 from django.contrib import admin
 
-from .models import Blueprint, Card, CardmarketPrice, Expansion, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 @admin.register(Card)
 class CardAdmin(admin.ModelAdmin):
-    list_display = ["name", "set_code", "collector_number", "type_line", "color", "ct_blueprint_id"]
-    list_filter = ["color", "set_code"]
-    search_fields = ["name", "type_line"]
+    list_display = ["name", "set_code", "collector_number", "ct_blueprint_id"]
+    list_filter = ["set_code"]
+    search_fields = ["name"]
 
 
 @admin.register(CollectionItem)
@@ -67,11 +67,18 @@ class ExpansionAdmin(admin.ModelAdmin):
     search_fields = ["code", "name"]
 
 
+@admin.register(Category)
+class CategoryAdmin(admin.ModelAdmin):
+    list_display = ["name", "ct_id"]
+    search_fields = ["name"]
+
+
 @admin.register(Blueprint)
 class BlueprintAdmin(admin.ModelAdmin):
-    list_display = ["name", "expansion", "collector_number", "version", "rarity", "ct_id"]
+    list_display = ["name", "expansion", "category", "collector_number", "version", "rarity", "ct_id"]
+    list_filter = ["category"]
     search_fields = ["name", "expansion__code"]
-    list_select_related = ["expansion"]
+    list_select_related = ["expansion", "category"]
 
 
 @admin.register(CardmarketPrice)

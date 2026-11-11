@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import Blueprint, Card, CardmarketPrice, CollectionItem, Expansion, Listing
+from .models import Blueprint, Card, CardmarketPrice, Category, CollectionItem, Expansion, Listing
 from .tests import LedgerTestCase
 
 
@@ -22,6 +22,15 @@ def catalog():
     )
     Blueprint.objects.create(ct_id=9007, expansion=m21, name="Basri Ket", collector_number="7", cm_price_id=466300)
     Blueprint.objects.create(ct_id=9045, expansion=dmr, name="Counterspell", collector_number="45")
+    single = Category.objects.create(ct_id=1, name="Magic Single Card")
+    boxes = Category.objects.create(ct_id=4, name="Booster Boxes")
+    Category.objects.create(ct_id=40, name="Playmats")  # no blueprint: not listed
+    Blueprint.objects.filter(ct_id__in=[9001, 9007, 9045]).update(category=single)
+    Blueprint.objects.create(
+        ct_id=9900, expansion=dmr, name="Dominaria Remastered Draft Booster Box", category=boxes,
+        editable_properties=["mtg_language"],
+    )
+    Blueprint.objects.create(ct_id=9901, expansion=dmr, name="Dominaria Remastered Playmat", editable_properties=[])
     return ugin
 
 
@@ -39,6 +48,14 @@ class ListingSuggestionTest(LedgerTestCase):
 
     def test_shows_trend_for_non_foil_item(self):
         self.item.foil = False
+        self.item.save()
+        self.assertEqual(self.suggestion(), "12.75")
+
+    def test_product_suggestion_uses_trend(self):
+        Blueprint.objects.filter(ct_id=9001).update(category=Category.objects.get(ct_id=4))
+        self.item.card.is_product = True
+        self.item.card.save()
+        self.item.foil = True  # a product is never foil, whatever the row says
         self.item.save()
         self.assertEqual(self.suggestion(), "12.75")
 
@@ -68,11 +85,11 @@ class ListingSuggestionTest(LedgerTestCase):
         self.assertEqual(Listing.objects.get(item=self.item).price, Decimal("3.00"))
 
 
-class CardsPageTest(LedgerTestCase):
+class CatalogApiTest(LedgerTestCase):
     def setUp(self):
         super().setUp()
         catalog()
-        self.url = reverse("ledger:api_cards")
+        self.url = reverse("ledger:api_catalog")
 
     def own(self, quantity, **card):
         item = CollectionItem.objects.select_related("card").first()
@@ -111,12 +128,39 @@ class CardsPageTest(LedgerTestCase):
         self.assertEqual(self.names(q="M21"), ["Basri Ket", "Ugin, the Spirit Dragon"])
 
     def test_set_filter(self):
-        self.assertEqual(self.names(set="DMR"), ["Counterspell"])
+        self.assertEqual(self.names(set="DMR"), ["Counterspell", "Dominaria Remastered Draft Booster Box",
+                                                 "Dominaria Remastered Playmat"])
 
     def test_set_and_number_filter_ignores_leading_zeros(self):
         data = self.search(set="m21", number="007")
         self.assertEqual([p["name"] for p in data["results"]], ["Basri Ket"])
-        self.assertEqual(data["filters"], {"q": "", "set": "m21", "number": "7", "owned": False})
+        self.assertEqual(data["filters"], {"q": "", "set": "m21", "number": "7", "category": None, "owned": False})
+
+    def test_category_filter_alone_searches(self):
+        data = self.search(category="4")
+        self.assertTrue(data["searched"])
+        self.assertEqual([p["name"] for p in data["results"]], ["Dominaria Remastered Draft Booster Box"])
+        self.assertEqual(data["filters"]["category"], 4)
+
+    def test_bad_category_is_ignored(self):
+        self.assertEqual(self.search(category="x")["searched"], False)
+
+    def test_row_has_category_fields(self):
+        rows = {p["ct_id"]: p for p in self.search(set="dmr")["results"]}
+        box, mat, card = rows[9900], rows[9901], rows[9045]
+        self.assertEqual((box["category_id"], box["category_name"], box["is_product"], box["accepts_language"]),
+                         (4, "Booster Boxes", True, True))
+        self.assertEqual((mat["category_id"], mat["is_product"], mat["accepts_language"]), (None, False, False))
+        self.assertEqual((card["category_id"], card["is_product"], card["accepts_language"]), (1, False, True))
+
+    def test_categories_list(self):
+        resp = self.client.get(reverse("ledger:api_catalog_categories"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [{"id": 4, "name": "Booster Boxes"}, {"id": 1, "name": "Magic Single Card"}])
+
+    def test_old_url_is_gone(self):
+        resp = self.client.get("/api/cards/", {"q": "Ugin"})
+        self.assertNotEqual(resp.get("Content-Type"), "application/json")
 
     def test_printing_without_price_shows_dashes(self):
         [card] = self.search(q="counterspell")["results"]
@@ -142,7 +186,7 @@ class CardsPageTest(LedgerTestCase):
 
     def test_no_criteria_lists_nothing(self):
         data = self.search(q="  ")
-        self.assertEqual(data, {"searched": False, "filters": {"q": "", "set": "", "number": "", "owned": False}})
+        self.assertEqual(data, {"searched": False, "filters": {"q": "", "set": "", "number": "", "category": None, "owned": False}})
 
     def test_no_results_message(self):
         data = self.search(q="zzzz")

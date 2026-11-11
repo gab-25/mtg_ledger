@@ -172,7 +172,7 @@ class OwnerIsolationSweepTest(LedgerTestCase):
 
     def test_list_pages_show_none_of_the_admins_cards(self):
         names = list(CollectionItem.objects.owned_by(self.user).values_list("card__name", flat=True))
-        for name, params in (("api_collection", {}), ("api_listings", {}), ("api_cards", {"owned": "1"}),
+        for name, params in (("api_collection", {}), ("api_listings", {}), ("api_catalog", {"owned": "1"}),
                              ("api_sync", {}), ("api_orders", {})):
             resp = self.client.get(reverse(f"ledger:{name}"), params)
             with self.subTest(page=name):

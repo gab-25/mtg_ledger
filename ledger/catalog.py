@@ -74,8 +74,24 @@ def merge_cards(source, target):
     return True
 
 
-def _blueprint_fields(bp):
-    """Map a /blueprints/export entry to Blueprint fields (shape to re-check against the live API)."""
+def category_pks(ct_ids):
+    """{CardTrader category id: Category pk} for ct_ids; unknown ids get a nameless row until sync_categories."""
+    from .models import Category
+
+    ct_ids = {i for i in ct_ids if i is not None}
+    Category.objects.bulk_create([Category(ct_id=i) for i in ct_ids], ignore_conflicts=True)
+    return dict(Category.objects.filter(ct_id__in=ct_ids).values_list("ct_id", "pk"))
+
+
+def _editable_properties(bp):
+    props = bp.get("editable_properties")
+    if props is None:
+        return None
+    return [p["name"] for p in props if isinstance(p, dict) and p.get("name")]
+
+
+def _blueprint_fields(bp, categories):
+    """Map a /blueprints/export entry to Blueprint fields; categories is category_pks() of the export."""
     fixed = bp.get("fixed_properties") or {}
     image = bp.get("image_url") or ((bp.get("image") or {}).get("url") if isinstance(bp.get("image"), dict) else "")
     return {
@@ -85,7 +101,67 @@ def _blueprint_fields(bp):
         "rarity": fixed.get("mtg_rarity") or "",
         "image_url": (image or "")[:500],
         "cm_price_id": next(iter(bp.get("card_market_ids") or []), None),
+        "category_id": categories.get(bp.get("category_id")),
+        "editable_properties": _editable_properties(bp),
     }
+
+
+def refresh_product_flags(ct_ids):
+    """Align Card.is_product with the catalog for the cards of these blueprints (their category may be new)."""
+    from django.db.models import Exists, OuterRef, Q
+
+    from .models import CARD_CATEGORY_IDS, Blueprint, Card
+
+    product = Blueprint.objects.filter(ct_id=OuterRef("ct_blueprint_id"), category__isnull=False).filter(
+        ~Q(category__ct_id__in=CARD_CATEGORY_IDS)
+    )
+    cards = Card.objects.filter(ct_blueprint_id__in=list(ct_ids)).annotate(product=Exists(product))
+    return (cards.filter(product=True, is_product=False).update(is_product=True)
+            + cards.filter(product=False, is_product=True).update(is_product=False))
+
+
+def _mark_product(card, bp):
+    if card.is_product != bp.is_product:
+        card.is_product = bp.is_product
+        card.save(update_fields=["is_product"])
+    return card
+
+
+def card_for_blueprint(bp):
+    """The Ledger card of a catalog blueprint: the one tied to it, an adopted hand-entered row, or a new one."""
+    from .forms import get_or_create_card
+    from .models import Card, SyncLog
+
+    card = Card.objects.filter(ct_blueprint_id=bp.ct_id).first()
+    if card is not None:
+        return _mark_product(card, bp)
+    set_code = bp.expansion.code.upper()
+    if not bp.version and bp.collector_number:
+        # base printing: adopt a hand-entered (name + set) row instead of duplicating it
+        legacy = Card.objects.filter(
+            name__iexact=bp.name, set_code=set_code, collector_number="", ct_blueprint_id__isnull=True
+        ).first()
+        if legacy is not None and not Card.objects.filter(
+            set_code=set_code, collector_number=bp.collector_number
+        ).exists():
+            legacy.ct_blueprint_id = bp.ct_id
+            legacy.collector_number = bp.collector_number
+            legacy.save(update_fields=["ct_blueprint_id", "collector_number"])
+            return _mark_product(legacy, bp)
+    # One Card per printing: a missing number, or one already taken by another blueprint, gets a unique stand-in.
+    number = bp.collector_number or f"CT{bp.ct_id}"
+    taken = Card.objects.filter(set_code=set_code, collector_number=number).first()
+    if taken is not None and taken.ct_blueprint_id not in (None, bp.ct_id):
+        SyncLog.objects.create(
+            level=SyncLog.Level.WARNING,
+            message=f"{bp} shares #{number} with {taken}: stored as #CT{bp.ct_id}"[:300],
+        )
+        number = f"CT{bp.ct_id}"
+    card = get_or_create_card(bp.name, set_code, number)
+    if card.ct_blueprint_id is None:
+        card.ct_blueprint_id = bp.ct_id
+        card.save(update_fields=["ct_blueprint_id"])
+    return _mark_product(card, bp)
 
 
 def sync_expansions(client):
@@ -102,6 +178,17 @@ def sync_expansions(client):
     return count
 
 
+def sync_categories(client):
+    """Upsert every MTG category from CardTrader. Returns how many there are."""
+    from .models import Category
+
+    count = 0
+    for c in client.categories() or []:
+        Category.objects.update_or_create(ct_id=c["id"], defaults={"name": c.get("name") or ""})
+        count += 1
+    return count
+
+
 def ensure_blueprints(client, expansion, *, force=False):
     """Load an expansion's blueprints once (or again with force). Returns how many were stored."""
     from django.utils import timezone
@@ -111,11 +198,14 @@ def ensure_blueprints(client, expansion, *, force=False):
     if expansion.blueprints_synced_at and not force:
         return 0
     count = 0
-    for bp in client.blueprints(expansion.ct_id):
+    exported = client.blueprints(expansion.ct_id)
+    categories = category_pks(bp.get("category_id") for bp in exported)
+    for bp in exported:
         Blueprint.objects.update_or_create(
-            ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp)}
+            ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp, categories)}
         )
         count += 1
+    refresh_product_flags(bp["id"] for bp in exported)
     expansion.blueprints_synced_at = timezone.now()
     expansion.save(update_fields=["blueprints_synced_at"])
     return count

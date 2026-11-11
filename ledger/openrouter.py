@@ -8,7 +8,7 @@ import json
 
 import httpx
 
-from .models import Color, Language
+from .models import Language
 from .recognition import Recognition
 
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -22,8 +22,6 @@ PROMPT = (
     f"- language: the language the card is printed in, one of {', '.join(Language.values)}; "
     "empty if unreadable or another language.\n"
     "- foil: true if the card is foil (holographic sheen, star next to the set code).\n"
-    "- type_line: the type line in English (e.g. \"Creature — Elf Druid\").\n"
-    f"- color: one of {', '.join(Color.values)} (M for multicolor, C for colorless).\n"
     "Never guess a collector number you cannot read. "
     "If the photo shows no Magic card (or it is unreadable), answer with an empty name and empty fields."
 )
@@ -36,10 +34,8 @@ SCHEMA = {
         "collector_number": {"type": "string"},
         "language": {"type": "string"},
         "foil": {"type": "boolean"},
-        "type_line": {"type": "string"},
-        "color": {"type": "string"},
     },
-    "required": ["name", "set_code", "collector_number", "language", "foil", "type_line", "color"],
+    "required": ["name", "set_code", "collector_number", "language", "foil"],
     "additionalProperties": False,
 }
 
@@ -115,13 +111,10 @@ class OpenRouterClient:
             return value.strip() if isinstance(value, str) else ""
 
         language = text("language").upper()
-        color = text("color").upper()
         return Recognition(
             name=text("name"),
             set_code=text("set_code").lower(),
             collector_number=text("collector_number"),
             language=language if language in Language.values else "",
             foil=read.get("foil") is True,
-            type_line=text("type_line"),
-            color=color if color in Color.values else "",
         )

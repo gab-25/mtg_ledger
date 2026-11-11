@@ -12,7 +12,7 @@ from .. import cardmarket, services
 from ..cardtrader import CardTraderError
 from ..forms import ListingForm
 from ..models import CollectionItem, Listing
-from ..presentation import listing_badge, pip
+from ..presentation import listing_badge
 from .common import doc, form_body, form_errors, messages_response, msg, query
 from .errors import ServiceError
 
@@ -36,7 +36,6 @@ def _row(listing):
         "quantity": listing.quantity,
         "price": _money(listing.price),
         "market_price": _money(listing.market_price),
-        "pip": pip(item.card.color),
         "badge": listing_badge(listing.status),
     }
 
