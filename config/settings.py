@@ -179,6 +179,7 @@ SPECTACULAR_SETTINGS = {
     'ENUM_NAME_OVERRIDES': {
         'ConditionEnum': 'ledger.models.Condition',
         'LanguageEnum': 'ledger.models.Language',
+        'ScanSessionStatusEnum': 'ledger.models.ScanSession.Status',
     },
     'SWAGGER_UI_DIST': 'SIDECAR',
     'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',

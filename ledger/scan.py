@@ -1,7 +1,8 @@
 """Camera scan sessions: the draft list of scanned cards and saving it into the collection."""
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Max, Q
+from django.db.models.functions import Greatest
 
 from . import pricing
 from .cardtrader import CardTraderError
@@ -22,6 +23,16 @@ def start_session(owner, expansion, condition):
         owner=owner, expansion=expansion, default_condition=condition,
         sale_threshold=last.sale_threshold if last else None,
     )
+
+
+def open_sessions(owner):
+    """owner's open sessions, most recent activity first, annotated with last_activity.
+
+    Adding or changing a card touches only its line, so the activity is the latest of the session's and its lines'.
+    """
+    return (ScanSession.objects.owned_by(owner).filter(status=ScanSession.Status.OPEN)
+            .annotate(last_activity=Greatest("updated_at", Max("lines__updated_at")))
+            .select_related("expansion").order_by("-last_activity", "-id"))
 
 
 def _price(client, line):

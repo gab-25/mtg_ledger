@@ -24,6 +24,7 @@ from .common import msg
 from .errors import Blocked, Closed, ServiceError, ServiceMissing
 
 SEARCH_LIMIT = 20
+SESSION_LIST_LIMIT = 10
 TAGS = ["scan"]
 logger = logging.getLogger(__name__)
 
@@ -137,10 +138,16 @@ def setup(request):
     }).data)
 
 
-@extend_schema(tags=TAGS, request=s.SessionCreateSerializer, responses={201: s.SessionCreatedSerializer},
+@extend_schema(methods=["GET"], tags=TAGS, responses=s.SessionListSerializer, operation_id="scan_sessions_list",
+               summary=f"The user's open sessions, most recent activity first (at most {SESSION_LIST_LIMIT})")
+@extend_schema(methods=["POST"], tags=TAGS, request=s.SessionCreateSerializer,
+               responses={201: s.SessionCreatedSerializer},
                summary="Start a session, preloading the expansion's cards and prices from CardTrader")
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 def sessions(request):
+    if request.method == "GET":
+        listed = scan.open_sessions(request.user)[:SESSION_LIST_LIMIT]
+        return Response(s.SessionListSerializer({"results": listed}, context={"request": request}).data)
     data = _validated(s.SessionCreateSerializer, request.data)
     expansion = data["expansion_id"]
     session = scan.start_session(request.user, expansion, data["condition"])
