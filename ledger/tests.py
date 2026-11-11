@@ -434,6 +434,20 @@ class ClientTest(TestCase):
             client.expansions()
         self.assertEqual(ctx.exception.status, 429)
 
+    def test_redirect_is_an_error(self):
+        # CardTrader answered every API call with an HTML 302 to its root: it must not read as an empty success.
+        def handler(request):
+            return httpx.Response(302, headers={"Location": "https://api.cardtrader.com/"}, text="<html>Found</html>")
+        client = CardTraderClient("x", transport=httpx.MockTransport(handler))
+        with self.assertRaises(CardTraderError) as ctx:
+            client.expansions()
+        self.assertEqual(ctx.exception.status, 302)
+
+    def test_non_json_success_is_an_error(self):
+        client = CardTraderClient("x", transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html/>")))
+        with self.assertRaises(CardTraderError):
+            client.expansions()
+
     def test_bearer_header_and_failed_job(self):
         seen = {}
 
