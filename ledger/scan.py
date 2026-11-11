@@ -226,6 +226,15 @@ def _list(item, line):
         listing.save(update_fields=["quantity", "status", "updated_at"])
 
 
+def discard_session(session):
+    """Delete an open session with its lines and captures; a saved one raises ScanError."""
+    with transaction.atomic():
+        session = ScanSession.objects.select_for_update().get(pk=session.pk)
+        if session.status == ScanSession.Status.SAVED:
+            raise ScanError("This scan session was already saved.")
+        session.delete()
+
+
 def save_session(session):
     """Write the draft into the collection. Returns (copies_saved, copies_listed)."""
     original = session

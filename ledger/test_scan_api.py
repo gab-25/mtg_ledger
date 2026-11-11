@@ -233,6 +233,43 @@ class SessionListTest(ScanApiBase):
         self.assertEqual(len(self.listed()), SESSION_LIST_LIMIT)
 
 
+class SessionDeleteTest(ScanApiBase):
+    def test_discard_open_session_with_its_cards(self):
+        session = self.start()
+        self.capture(session)
+        resp = self.call("delete", "scan_api_session", session.uuid)
+        self.assertEqual(resp.status_code, 204, resp.content)
+        self.assertFalse(ScanSession.objects.filter(pk=session.pk).exists())
+        self.assertFalse(ScanLine.objects.filter(session_id=session.pk).exists())
+        self.assertFalse(ScanCapture.objects.filter(session_id=session.pk).exists())
+        self.assertEqual(self.call("get", "scan_api_sessions").json()["results"], [])
+
+    def test_saved_session_cannot_be_discarded(self):
+        session = self.start()
+        session.status = ScanSession.Status.SAVED
+        session.save()
+        self.assertError(self.call("delete", "scan_api_session", session.uuid), 409, "closed")
+        self.assertTrue(ScanSession.objects.filter(pk=session.pk).exists())
+
+    def test_saved_while_discarding_is_409(self):
+        session = self.start()
+        ScanSession.objects.filter(pk=session.pk).update(status=ScanSession.Status.SAVED)
+        with mock.patch("ledger.api.scan._get_session", return_value=session):
+            self.assertError(self.call("delete", "scan_api_session", session.uuid), 409, "closed")
+        self.assertTrue(ScanSession.objects.filter(pk=session.pk).exists())
+
+    def test_saving_a_session_discarded_meanwhile_is_404(self):
+        session = self.start()
+        ScanSession.objects.filter(pk=session.pk).delete()
+        with mock.patch("ledger.api.scan._get_session", return_value=session):
+            self.assertError(self.call("post", "scan_api_save", session.uuid), 404, "not_found")
+
+    def test_other_users_session_is_404(self):
+        theirs = ScanSession.objects.create(owner=self.other, expansion=self.dmr)
+        self.assertError(self.call("delete", "scan_api_session", theirs.uuid), 404, "not_found")
+        self.assertTrue(ScanSession.objects.filter(pk=theirs.pk).exists())
+
+
 class CaptureTest(ScanApiBase):
     def test_capture_adds_line(self):
         resp = self.capture(self.start())
