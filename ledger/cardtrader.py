@@ -72,9 +72,11 @@ class CardTraderClient:
             raise CardTraderError("CardTrader rate limit exceeded, retry in a few seconds.", 429)
         try:
             data = resp.json() if resp.content else None
+            parsed = True
         except ValueError:
-            data = None
-        if resp.is_error:
+            data, parsed = None, False
+        # Redirects are not followed: CardTrader sends them (HTML, to its root) when the API is unavailable.
+        if not resp.is_success:
             message = None
             if isinstance(data, dict):
                 message = (data.get("extra") or {}).get("message") or data.get("error") or data.get("error_code")
@@ -83,6 +85,8 @@ class CardTraderClient:
                 resp.status_code,
                 data,
             )
+        if not parsed:
+            raise CardTraderError(f"CardTrader {method} {path} answered with an unreadable response.", resp.status_code)
         return data
 
     def _get(self, path, **params):
