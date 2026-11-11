@@ -28,4 +28,5 @@ RUN useradd --system --create-home --uid 1000 app
 USER app
 EXPOSE 8000
 
-CMD ["sh", "-c", "exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-2}"]
+# Apply pending migrations before serving (the Celery worker overrides CMD and skips this).
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-2}"]

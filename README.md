@@ -53,7 +53,6 @@ Run the whole stack (PostgreSQL + app built from the local `Dockerfile`) with Do
 
 ```bash
 docker compose up -d --build
-docker compose exec mtg_ledger python manage.py migrate
 docker compose exec mtg_ledger python manage.py createsuperuser
 ```
 
@@ -74,8 +73,8 @@ Environment variables: the `POSTGRES_*` ones above, `DJANGO_SECRET_KEY`, `DJANGO
 `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS` (comma-separated), `DJANGO_BEHIND_HTTPS_PROXY` (`true` when a
 reverse proxy terminates HTTPS and sets `X-Forwarded-Proto`), `GUNICORN_WORKERS`,
 `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `CELERY_BROKER_URL` (default `redis://localhost:6379/0`).
-Migrations never run on their own at container start: run `python manage.py migrate` yourself after each upgrade
-(e.g. `docker compose exec mtg_ledger python manage.py migrate`, or a one-off container of the image with that command).
+The app container applies pending migrations (`python manage.py migrate`) every time it starts, before gunicorn; the
+Celery worker does not. If a migration fails the container exits without serving, and its logs show why.
 
 ## Users
 
@@ -84,8 +83,10 @@ cards, listings, orders, scan sessions, sync conflicts and log entries (another 
 catalog and the prices are shared. The administrator creates the accounts in the Django admin (`/admin/`); there is no
 sign-up page.
 
-Upgrading a single-user Ledger: the existing data goes to the first superuser, so create one before `migrate` if there
-is none (the migration stops with a message otherwise).
+Upgrading a single-user Ledger: the existing data goes to the first superuser, so create one before upgrading if there
+is none (the migration stops with a message otherwise, and the new container does not start: create the superuser with
+the old image, or with a one-off container of the new one, e.g.
+`docker compose run --rm mtg_ledger python manage.py createsuperuser`, which skips the migrations).
 
 ## CardTrader
 
