@@ -97,8 +97,10 @@ for scanning to work. `CARDTRADER_API_TOKEN` is no longer read (nor passed by `c
 still set where `migrate` runs and no token was saved in the profile, the migration copies it into the first
 superuser's profile; otherwise connect the token from the profile after upgrading.
 
-- **Publish**: listings "To publish" are created/updated on CardTrader with the bulk API. Cards are matched to the
-  CardTrader catalog (blueprint) by set code + name the first time; unmatched cards stay pending with a warning.
+- **Publish**: listings "To publish" are created/updated on CardTrader with the bulk API. Items added from the catalog
+  already know their CardTrader product; cards imported from CSV are matched to the catalog (blueprint) by set code +
+  name the first time, and unmatched cards stay pending with a warning. Sealed products and accessories are sold with
+  only the properties CardTrader takes for them (a language, when it has one).
 - **Sync all**: imports sale orders (removing sold copies from the Ledger following CardTrader's CardTrader Zero
   rules), then compares published listings with your CardTrader inventory and opens conflicts.
 - **Match market prices**: reads the cheapest offer from other sellers for the same condition/language/foil.

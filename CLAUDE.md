@@ -49,10 +49,13 @@ There is no linter or formatter configured. Settings come only from the environm
   `services.user_client(user)` never falls back to another user's token. The *service* token (catalog, prices,
   scan recognition) is the first superuser's own token (`services.service_client()`). All clients are built by
   `services.make_client`, which tests patch.
-- **Cards vs printings**: `Card` is the Ledger's own card row (name + set + collector number) that `CollectionItem`
-  points to; `Blueprint` is a printing in the local copy of the CardTrader catalog (`ledger/catalog.py`, loaded lazily
-  or nightly by `ledger/cardmarket.py`, which also ties blueprints to Cardmarket prices). `ledger/pricing.py` caches
-  CardTrader market prices.
+- **Cards vs printings**: `Card` is the Ledger's own row (name + set + collector number) that `CollectionItem`
+  points to; `Blueprint` is a product in the local copy of the CardTrader catalog (`ledger/catalog.py`, loaded lazily
+  or nightly by `ledger/cardmarket.py`, which also ties blueprints to Cardmarket prices). The catalog holds every
+  CardTrader MTG product: `Blueprint.category` (CardTrader category) tells cards (ids 1-3) from sealed products and
+  accessories (`is_product`), and `editable_properties` lists what CardTrader takes when selling it. Collection items
+  are added only from the catalog (`catalog.card_for_blueprint`); products are stored Near Mint, non-foil, and never
+  send foil (nor a language CardTrader does not take). `ledger/pricing.py` caches CardTrader market prices.
 - **Scan pipeline**: photo → `ledger/openrouter.py` (vision model reads the card) → `ledger/recognition.py` (matches
   it to a `Blueprint`) → `ledger/scan.py` (draft lines of a `ScanSession`, saved into the collection at the end).
   The scan API (`ledger/api/scan.py`) is the only one with real DRF serializers (`ledger/api/serializers.py`).
