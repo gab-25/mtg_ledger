@@ -1,6 +1,7 @@
 import json
 import tempfile
 import tomllib
+from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -11,8 +12,11 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from . import catalog, services
+from .api.scan import SESSION_LIST_LIMIT
 from .api.serializers import MAX_FRAME_BYTES
 from .forms import CardItemForm, ListingForm
 from .cardtrader import CardTraderError
@@ -170,6 +174,100 @@ class SetupAndSessionTest(ScanApiBase):
     def test_unknown_session_404(self):
         self.assertError(self.call("get", "scan_api_session", "00000000-0000-0000-0000-000000000000"),
                          404, "not_found")
+
+
+class SessionListTest(ScanApiBase):
+    def listed(self):
+        resp = self.call("get", "scan_api_sessions")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return resp.json()["results"]
+
+    def touch(self, session, when):
+        ScanSession.objects.filter(pk=session.pk).update(updated_at=when)
+
+    def test_empty(self):
+        self.assertEqual(self.listed(), [])
+
+    def test_lists_open_sessions_with_their_details(self):
+        session = self.start()
+        self.capture(session)
+        [item] = self.listed()
+        self.assertEqual(item["uuid"], str(session.uuid))
+        self.assertEqual(item["status"], "open")
+        self.assertEqual(item["expansion"]["code"], "dmr")
+        self.assertEqual((item["default_condition"], item["count"]), ("NM", 1))
+        self.assertEqual(item["last_line"]["blueprint"]["id"], 1201)
+        self.assertIn("phone_url", item)
+        self.assertTrue(item["created_at"] and item["updated_at"])
+
+    def test_saved_sessions_are_excluded(self):
+        kept, saved = self.start(), self.start()
+        saved.status = ScanSession.Status.SAVED
+        saved.save()
+        self.assertEqual([i["uuid"] for i in self.listed()], [str(kept.uuid)])
+
+    def test_other_users_sessions_are_excluded(self):
+        mine = self.start()
+        ScanSession.objects.create(owner=self.other, expansion=self.dmr)
+        self.assertEqual([i["uuid"] for i in self.listed()], [str(mine.uuid)])
+
+    def test_newest_activity_first(self):
+        older, newer = self.start(), self.start()
+        self.touch(older, timezone.now() - timedelta(hours=2))
+        self.touch(newer, timezone.now() - timedelta(hours=1))
+        self.assertEqual([i["uuid"] for i in self.listed()], [str(newer.uuid), str(older.uuid)])
+
+    def test_scanning_a_card_counts_as_activity(self):
+        scanned, idle = self.start(), self.start()
+        self.touch(scanned, timezone.now() - timedelta(hours=2))
+        self.touch(idle, timezone.now() - timedelta(hours=1))
+        self.capture(scanned)
+        listed = self.listed()
+        self.assertEqual([i["uuid"] for i in listed], [str(scanned.uuid), str(idle.uuid)])
+        line = ScanLine.objects.get(session=scanned)
+        self.assertEqual(parse_datetime(listed[0]["updated_at"]), line.updated_at)
+
+    def test_capped(self):
+        for _ in range(SESSION_LIST_LIMIT + 2):
+            ScanSession.objects.create(owner=self.user, expansion=self.dmr)
+        self.assertEqual(len(self.listed()), SESSION_LIST_LIMIT)
+
+
+class SessionDeleteTest(ScanApiBase):
+    def test_discard_open_session_with_its_cards(self):
+        session = self.start()
+        self.capture(session)
+        resp = self.call("delete", "scan_api_session", session.uuid)
+        self.assertEqual(resp.status_code, 204, resp.content)
+        self.assertFalse(ScanSession.objects.filter(pk=session.pk).exists())
+        self.assertFalse(ScanLine.objects.filter(session_id=session.pk).exists())
+        self.assertFalse(ScanCapture.objects.filter(session_id=session.pk).exists())
+        self.assertEqual(self.call("get", "scan_api_sessions").json()["results"], [])
+
+    def test_saved_session_cannot_be_discarded(self):
+        session = self.start()
+        session.status = ScanSession.Status.SAVED
+        session.save()
+        self.assertError(self.call("delete", "scan_api_session", session.uuid), 409, "closed")
+        self.assertTrue(ScanSession.objects.filter(pk=session.pk).exists())
+
+    def test_saved_while_discarding_is_409(self):
+        session = self.start()
+        ScanSession.objects.filter(pk=session.pk).update(status=ScanSession.Status.SAVED)
+        with mock.patch("ledger.api.scan._get_session", return_value=session):
+            self.assertError(self.call("delete", "scan_api_session", session.uuid), 409, "closed")
+        self.assertTrue(ScanSession.objects.filter(pk=session.pk).exists())
+
+    def test_saving_a_session_discarded_meanwhile_is_404(self):
+        session = self.start()
+        ScanSession.objects.filter(pk=session.pk).delete()
+        with mock.patch("ledger.api.scan._get_session", return_value=session):
+            self.assertError(self.call("post", "scan_api_save", session.uuid), 404, "not_found")
+
+    def test_other_users_session_is_404(self):
+        theirs = ScanSession.objects.create(owner=self.other, expansion=self.dmr)
+        self.assertError(self.call("delete", "scan_api_session", theirs.uuid), 404, "not_found")
+        self.assertTrue(ScanSession.objects.filter(pk=theirs.pk).exists())
 
 
 class CaptureTest(ScanApiBase):
@@ -543,9 +641,9 @@ class ProtocolTest(ScanApiBase):
 
     def test_405_on_wrong_method(self):
         session = self.start()
-        resp = self.call("get", "scan_api_sessions")
+        resp = self.call("delete", "scan_api_sessions")
         self.assertError(resp, 405, "method_not_allowed")
-        self.assertEqual(set(resp["Allow"].split(", ")), {"POST", "OPTIONS"})
+        self.assertEqual(set(resp["Allow"].split(", ")), {"GET", "POST", "OPTIONS"})
         self.assertError(self.call("post", "scan_api_review", session.uuid), 405, "method_not_allowed")
         self.assertError(self.call("post", "scan_api_threshold", session.uuid, data={}), 405, "method_not_allowed")
 

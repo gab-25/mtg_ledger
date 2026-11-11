@@ -168,6 +168,21 @@ class SessionDetailSerializer(serializers.Serializer):
     session = SessionSerializer()
 
 
+class SessionListItemSerializer(SessionSerializer):
+    """A session in the list of open ones: needs the last_activity annotation (see scan.open_sessions)."""
+
+    updated_at = serializers.DateTimeField(source="last_activity", read_only=True,
+                                           help_text="Last activity: the session or one of its cards changed")
+
+    class Meta(SessionSerializer.Meta):
+        fields = SessionSerializer.Meta.fields + ["created_at", "updated_at"]
+        read_only_fields = fields
+
+
+class SessionListSerializer(serializers.Serializer):
+    results = SessionListItemSerializer(many=True)
+
+
 class SessionCreatedSerializer(SessionDetailSerializer):
     warnings = serializers.ListField(child=serializers.CharField())
 

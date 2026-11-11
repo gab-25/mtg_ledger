@@ -24,6 +24,7 @@ from .common import msg
 from .errors import Blocked, Closed, ServiceError, ServiceMissing
 
 SEARCH_LIMIT = 20
+SESSION_LIST_LIMIT = 10
 TAGS = ["scan"]
 logger = logging.getLogger(__name__)
 
@@ -137,10 +138,16 @@ def setup(request):
     }).data)
 
 
-@extend_schema(tags=TAGS, request=s.SessionCreateSerializer, responses={201: s.SessionCreatedSerializer},
+@extend_schema(methods=["GET"], tags=TAGS, responses=s.SessionListSerializer, operation_id="scan_sessions_list",
+               summary=f"The user's open sessions, most recent activity first (at most {SESSION_LIST_LIMIT})")
+@extend_schema(methods=["POST"], tags=TAGS, request=s.SessionCreateSerializer,
+               responses={201: s.SessionCreatedSerializer},
                summary="Start a session, preloading the expansion's cards and prices from CardTrader")
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 def sessions(request):
+    if request.method == "GET":
+        listed = scan.open_sessions(request.user)[:SESSION_LIST_LIMIT]
+        return Response(s.SessionListSerializer({"results": listed}, context={"request": request}).data)
     data = _validated(s.SessionCreateSerializer, request.data)
     expansion = data["expansion_id"]
     session = scan.start_session(request.user, expansion, data["condition"])
@@ -156,9 +163,19 @@ def sessions(request):
     return Response(body.data, status=status.HTTP_201_CREATED)
 
 
-@extend_schema(tags=TAGS, responses=s.SessionDetailSerializer, summary="A session, open or saved")
-@api_view(["GET"])
+@extend_schema(methods=["GET"], tags=TAGS, responses=s.SessionDetailSerializer, summary="A session, open or saved")
+@extend_schema(methods=["DELETE"], tags=TAGS, responses={204: None},
+               summary="Discard an open session with its cards; a saved one can't be discarded")
+@api_view(["GET", "DELETE"])
 def session_detail(request, uid):
+    if request.method == "DELETE":
+        try:
+            scan.discard_session(_get_session(request.user, uid))
+        except ScanSession.DoesNotExist:  # discarded by another request in the meantime
+            raise Http404
+        except scan.ScanError:  # saved by another request in the meantime
+            raise Closed()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     session = _get_session(request.user, uid, open_only=False)
     return Response(s.SessionDetailSerializer({"session": session}, context={"request": request}).data)
 
@@ -287,6 +304,8 @@ def save(request, uid):
     session = _get_session(request.user, uid)
     try:
         saved, listed = scan.save_session(session)
+    except ScanSession.DoesNotExist:  # discarded by another request in the meantime
+        raise Http404
     except scan.ScanError as exc:
         if "already saved" in str(exc):  # saved by another request in the meantime
             raise Closed()

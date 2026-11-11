@@ -155,7 +155,7 @@ class OwnerIsolationSweepTest(LedgerTestCase):
     def test_other_users_objects_are_404(self):
         for name, target in self.TARGETS.items():
             url = reverse(f"ledger:{name}", args=[target(self)])
-            for method in ("get", "post"):
+            for method in ("get", "post", "delete"):
                 with self.subTest(name=name, method=method):
                     self.assertIn(getattr(self.client, method)(url).status_code, (404, 405))
         # nothing changed
