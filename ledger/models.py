@@ -30,16 +30,6 @@ class SyncLogQuerySet(models.QuerySet):
         return self.filter(Q(owner=user) | Q(owner__isnull=True))
 
 
-class Color(models.TextChoices):
-    WHITE = "W", "White"
-    BLUE = "U", "Blue"
-    BLACK = "B", "Black"
-    RED = "R", "Red"
-    GREEN = "G", "Green"
-    COLORLESS = "C", "Colorless"
-    MULTI = "M", "Multicolor"
-
-
 class Condition(models.TextChoices):
     MINT = "M", "Mint"
     NEAR_MINT = "NM", "Near Mint"
@@ -67,10 +57,8 @@ class Card(models.Model):
     """A specific printing of a card (name + set)."""
 
     name = models.CharField(max_length=200)
-    type_line = models.CharField(max_length=200, blank=True)
     set_code = models.CharField(max_length=10)
     collector_number = models.CharField(max_length=40, blank=True, default="")
-    color = models.CharField(max_length=1, choices=Color.choices, default=Color.COLORLESS)
     ct_blueprint_id = models.PositiveIntegerField(
         "CardTrader blueprint", null=True, blank=True, help_text="Matched automatically on first publish"
     )
@@ -484,8 +472,6 @@ class ScanLine(models.Model):
     candidates = models.JSONField(default=list, blank=True, help_text="Blueprint ct_ids to choose from")
     read_name = models.CharField(max_length=200, blank=True, help_text="The card name the model read")
     frame = models.BinaryField(null=True, blank=True)
-    type_line = models.CharField(max_length=200, blank=True)
-    color = models.CharField(max_length=1, choices=Color.choices, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

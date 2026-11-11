@@ -170,19 +170,19 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
     }
 
 
-# name, type, set, cond, lang, qty, price, color, listing (status, price, market) or None
+# name, set, cond, lang, qty, price, listing (status, price, market) or None
 CARDS = [
-    ("Ragavan, Nimble Pilferer", "Creature — Monkey Pirate", "MH2", "NM", "EN", 1, "48.00", "R", ("published", "48.00", "46.50")),
-    ("The One Ring", "Legendary Artifact", "LTR", "NM", "EN", 1, "62.50", "C", None),
-    ("Sheoldred, the Apocalypse", "Legendary Creature — Phyrexian Praetor", "DMU", "LP", "IT", 2, "71.80", "B", ("to_publish", "71.80", "70.00")),
-    ("Orcish Bowmasters", "Creature — Orc Archer", "LTR", "NM", "EN", 4, "23.50", "B", None),
-    ("Fable of the Mirror-Breaker", "Enchantment — Saga", "NEO", "NM", "JP", 2, "19.20", "R", ("to_publish", "19.20", "18.90")),
-    ("Wrenn and Six", "Planeswalker — Wrenn", "2XM", "EX", "EN", 1, "29.90", "M", None),
-    ("Counterspell", "Instant", "DMR", "NM", "IT", 4, "0.80", "U", ("to_publish", "0.80", "0.70")),
-    ("Thoughtseize", "Sorcery", "2XM", "NM", "EN", 3, "12.00", "B", None),
-    ("Solitude", "Creature — Elemental Incarnation", "MH2", "EX", "EN", 1, "21.00", "W", ("published", "21.00", "22.40")),
-    ("Urza’s Saga", "Enchantment Land — Urza’s Saga", "MH2", "NM", "EN", 1, "24.50", "C", ("published", "24.50", "24.00")),
-    ("Endurance", "Creature — Reptile Elemental Incarnation", "MH2", "LP", "EN", 1, "11.00", "G", ("sold", "11.00", "11.30")),
+    ("Ragavan, Nimble Pilferer", "MH2", "NM", "EN", 1, "48.00", ("published", "48.00", "46.50")),
+    ("The One Ring", "LTR", "NM", "EN", 1, "62.50", None),
+    ("Sheoldred, the Apocalypse", "DMU", "LP", "IT", 2, "71.80", ("to_publish", "71.80", "70.00")),
+    ("Orcish Bowmasters", "LTR", "NM", "EN", 4, "23.50", None),
+    ("Fable of the Mirror-Breaker", "NEO", "NM", "JP", 2, "19.20", ("to_publish", "19.20", "18.90")),
+    ("Wrenn and Six", "2XM", "EX", "EN", 1, "29.90", None),
+    ("Counterspell", "DMR", "NM", "IT", 4, "0.80", ("to_publish", "0.80", "0.70")),
+    ("Thoughtseize", "2XM", "NM", "EN", 3, "12.00", None),
+    ("Solitude", "MH2", "EX", "EN", 1, "21.00", ("published", "21.00", "22.40")),
+    ("Urza’s Saga", "MH2", "NM", "EN", 1, "24.50", ("published", "24.50", "24.00")),
+    ("Endurance", "MH2", "LP", "EN", 1, "11.00", ("sold", "11.00", "11.30")),
 ]
 
 # name, field, Ledger value, CardTrader value, numeric CardTrader value
@@ -201,10 +201,8 @@ def load_demo(owner):
     service.save()
 
     items = {}
-    for name, type_line, set_code, cond, lang, qty, price, color, listing in CARDS:
-        card, _ = Card.objects.get_or_create(
-            name=name, set_code=set_code, defaults={"type_line": type_line, "color": color}
-        )
+    for name, set_code, cond, lang, qty, price, listing in CARDS:
+        card, _ = Card.objects.get_or_create(name=name, set_code=set_code)
         item, _ = CollectionItem.objects.get_or_create(
             owner=owner, card=card, condition=cond, language=lang, foil=False,
             defaults={"quantity": qty, "price": Decimal(price)},
@@ -297,16 +295,17 @@ class PagesTest(LedgerTestCase):
         self.assertEqual(counts, {"pending_changes": 3, "orders_to_ship": 2})
 
     def test_collection_filters(self):
-        data = self.collection(color="B", q="seize")
+        data = self.collection(q="seize")
         self.assertEqual([r["name"] for r in data["results"]], ["Thoughtseize"])
+        self.assertNotIn("pip", data["results"][0])
+        self.assertNotIn("type_line", data["results"][0])
         self.assertTrue(data["filtered"])
         self.assertEqual(len(self.collection(set="LTR", cond="NM")["results"]), 2)
 
     def test_collection_filter_choices(self):
         data = self.collection()
         self.assertEqual(data["sets"], sorted(set(data["sets"])))
-        self.assertEqual([c["code"] for c in data["color_filters"]], ["W", "U", "B", "R", "G"])
-        self.assertTrue(all(c["pip"].startswith("#") for c in data["color_filters"]))
+        self.assertNotIn("color_filters", data)
 
     def test_pagination_payload(self):
         card = Card.objects.create(name="Island", set_code="ZZZ")
@@ -322,12 +321,12 @@ class PagesTest(LedgerTestCase):
     def test_choices(self):
         data = self.client.get(reverse("ledger:api_choices")).json()
         self.assertIn(["NM", "Near Mint"], data["conditions"])
-        self.assertIn(["R", "Red"], data["colors"])
+        self.assertNotIn("colors", data)
         self.assertIn(["EN", "English"], data["languages"])
         self.assertIn(["to_publish", "To publish"], data["listing_statuses"])
 
 
-BOLT = {"name": "Lightning Bolt", "set_code": "m10", "type_line": "Instant", "color": "R",
+BOLT = {"name": "Lightning Bolt", "set_code": "m10",
         "condition": "NM", "language": "EN", "quantity": 4, "price": "1.50"}
 
 
@@ -366,13 +365,20 @@ class CsvTest(LedgerTestCase):
         resp = self.client.get(reverse("ledger:api_export"))
         self.assertTrue(resp["Content-Disposition"].startswith('attachment; filename="mtg-ledger-'))
         csv_bytes = resp.content
-        self.assertIn(b"name,set,type", csv_bytes)
+        self.assertTrue(csv_bytes.startswith(b"name,set,condition,language,foil,quantity,price,number"))
         before = CollectionItem.objects.count()
-        upload = SimpleUploadedFile("c.csv", csv_bytes + "Lightning Bolt,M10,Instant,R,NM,EN,0,4,1.50\n".encode())
+        upload = SimpleUploadedFile("c.csv", csv_bytes + "Lightning Bolt,M10,NM,EN,0,4,1.50,\n".encode())
         resp = self.client.post(reverse("ledger:api_import"), {"file": upload})
         self.assertEqual(resp.status_code, 200)
         self.assertRegex(resp.json()["messages"][0]["text"], r"^Import complete: 1 new, \d+ updated\.$")
         self.assertEqual(CollectionItem.objects.count(), before + 1)
+
+    def test_import_ignores_old_type_and_color_columns(self):
+        upload = SimpleUploadedFile("c.csv", b"name,set,type,color,condition,language,quantity,price\n"
+                                             b"Lightning Bolt,M10,Instant,R,NM,EN,4,1.50\n")
+        resp = self.client.post(reverse("ledger:api_import"), {"file": upload})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(CollectionItem.objects.get(card__name="Lightning Bolt").quantity, 4)
 
     def test_import_columns(self):
         self.assertEqual(self.client.get(reverse("ledger:api_import")).json()["columns"], list(services.CSV_FIELDS))
@@ -425,7 +431,7 @@ class CollectionIsolationTest(LedgerTestCase):
     def test_add_cards_form_creates_own_item(self):
         self.as_other()
         self.client.post(reverse("ledger:api_collection"), {
-            "name": "Thoughtseize", "set_code": "2XM", "color": "B",
+            "name": "Thoughtseize", "set_code": "2XM",
             "condition": "NM", "language": "EN", "quantity": 1, "price": "12.00",
         }, content_type="application/json")
         self.assertEqual(CollectionItem.objects.get(owner=self.other).card.name, "Thoughtseize")
@@ -560,7 +566,7 @@ class SaleApiTest(LedgerTestCase):
         self.assertEqual(data["status"], "")
         row = next(r for r in data["results"] if r["name"] == "Counterspell")
         self.assertEqual(set(row), {"item_id", "name", "set_code", "condition", "language", "foil", "quantity",
-                                    "price", "market_price", "pip", "badge"})
+                                    "price", "market_price", "badge"})
         sold = self.client.get(reverse("ledger:api_listings"), {"status": "sold"}).json()
         self.assertEqual(sold["status"], "sold")
         self.assertEqual({r["badge"]["label"] for r in sold["results"]}, {"Sold"})

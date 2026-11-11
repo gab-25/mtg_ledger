@@ -35,7 +35,7 @@ class PrintingFormCsvTest(LedgerTestCase):
     def test_form_with_number_targets_printing(self):
         resp = self.client.post(reverse("ledger:api_collection"), {
             "name": "Fable of the Mirror-Breaker", "set_code": "neo", "collector_number": "0356",
-            "color": "R", "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00",
+            "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00",
         }, content_type="application/json")
         self.assertEqual(resp.status_code, 201)
         self.assertTrue(Card.objects.filter(set_code="NEO", collector_number="356").exists())

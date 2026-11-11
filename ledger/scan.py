@@ -6,7 +6,7 @@ from django.db.models import Q
 from . import pricing
 from .cardtrader import CardTraderError
 from .forms import get_or_create_card
-from .models import Card, CollectionItem, Color, Listing, ScanCapture, ScanLine, ScanSession, SyncLog
+from .models import Card, CollectionItem, Listing, ScanCapture, ScanLine, ScanSession, SyncLog
 
 UNSET = object()
 
@@ -64,10 +64,9 @@ def _merge_or_save(line):
     return twin
 
 
-def _add_certain(session, client, blueprint, language, foil, *, type_line="", color=""):
+def _add_certain(session, client, blueprint, language, foil):
     line = ScanLine(
-        session=session, blueprint=blueprint, language=language, foil=foil,
-        condition=session.default_condition, type_line=type_line, color=color,
+        session=session, blueprint=blueprint, language=language, foil=foil, condition=session.default_condition,
     )
     twin = _twin(line)
     if twin is not None:
@@ -101,15 +100,12 @@ def add_capture(session, client, rec, m, *, frame, capture_id="", capture=None):
         if not created:
             return capture.line, False
     if m.blueprint is not None:
-        line, merged = _add_certain(
-            session, client, m.blueprint, rec.language, rec.foil, type_line=rec.type_line, color=rec.color,
-        )
+        line, merged = _add_certain(session, client, m.blueprint, rec.language, rec.foil)
     else:
         line = ScanLine.objects.create(
             session=session, language=rec.language, foil=rec.foil, condition=session.default_condition,
             needs_confirmation=True, candidates=[b.ct_id for b in m.candidates], frame=frame,
             read_name=rec.name.strip()[:200],
-            type_line=rec.type_line, color=rec.color,
         )
         merged = False
     if capture is not None:
@@ -172,7 +168,6 @@ def _card_for(line):
     if card is not None:
         return card
     set_code = bp.expansion.code.upper()
-    defaults = {"type_line": line.type_line, "color": line.color or Color.COLORLESS}
     if not bp.version and bp.collector_number:
         # base printing: adopt a hand-entered (name + set) row instead of duplicating it
         legacy = Card.objects.filter(
@@ -194,7 +189,7 @@ def _card_for(line):
             message=f"{bp} shares #{number} with {taken}: stored as #CT{bp.ct_id}"[:300],
         )
         number = f"CT{bp.ct_id}"
-    card = get_or_create_card(bp.name, set_code, number, **defaults)
+    card = get_or_create_card(bp.name, set_code, number)
     if card.ct_blueprint_id is None:
         card.ct_blueprint_id = bp.ct_id
         card.save(update_fields=["ct_blueprint_id"])

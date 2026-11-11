@@ -12,8 +12,8 @@ from rest_framework.response import Response
 
 from .. import services
 from ..forms import CardItemForm, CsvImportForm
-from ..models import Card, CollectionItem, Color, Condition, Language, Listing, SyncLog
-from ..presentation import COLOR_FILTERS, item_badge, pip
+from ..models import Card, CollectionItem, Condition, Language, Listing, SyncLog
+from ..presentation import item_badge
 from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
@@ -25,11 +25,10 @@ def _choices(choices):
     return [[value, label] for value, label in choices]
 
 
-@doc(TAGS, "Choices of the card and listing forms: colors, conditions, languages, listing statuses")
+@doc(TAGS, "Choices of the card and listing forms: conditions, languages, listing statuses")
 @api_view(["GET"])
 def choices(request):
     return Response({
-        "colors": _choices(Color.choices),
         "conditions": _choices(Condition.choices),
         "languages": _choices(Language.choices),
         "listing_statuses": _choices(Listing.Status.choices),
@@ -41,7 +40,6 @@ def _row(item):
     return {
         "id": item.pk,
         "name": card.name,
-        "type_line": card.type_line,
         "set_code": card.set_code,
         "foil": item.foil,
         "condition": item.condition,
@@ -49,7 +47,6 @@ def _row(item):
         "language": item.language,
         "quantity": item.quantity,
         "price": f"{item.price:.2f}",
-        "pip": pip(card.color),
         "badge": item_badge(item.status),
     }
 
@@ -67,14 +64,11 @@ def _collection(request):
 
     params = request.query_params
     q = params.get("q", "").strip()
-    color = params.get("color", "")
     foil = params.get("foil") == "1"
     set_code = params.get("set", "")
     cond = params.get("cond", "")
     if q:
-        items = items.filter(Q(card__name__icontains=q) | Q(card__set_code__iexact=q) | Q(card__type_line__icontains=q))
-    if color in Color.values:
-        items = items.filter(card__color=color)
+        items = items.filter(Q(card__name__icontains=q) | Q(card__set_code__iexact=q))
     if foil:
         items = items.filter(foil=True)
     if set_code:
@@ -87,15 +81,13 @@ def _collection(request):
         "stats": stats,
         "sets": list(Card.objects.filter(items__owner=user).values_list("set_code", flat=True)
                      .distinct().order_by("set_code")),
-        "color_filters": [{"code": code, "label": label, "pip": pip(code)} for code, label in COLOR_FILTERS],
-        "filtered": bool(q or color or foil or set_code or cond),
+        "filtered": bool(q or foil or set_code or cond),
     })
 
 
-@doc(TAGS, "The collection (GET: ?q, color, foil, set, cond, page) or add cards to it (POST)", request=CARD_ITEM)
+@doc(TAGS, "The collection (GET: ?q, foil, set, cond, page) or add cards to it (POST)", request=CARD_ITEM)
 @extend_schema(methods=["GET"], parameters=[
-    query("q", "Name, type or exact set code"),
-    query("color", "Card color", enum=Color.values),
+    query("q", "Name or exact set code"),
     query("foil", "1: foils only", enum=["1"]),
     query("set", "Exact set code"),
     query("cond", "Condition", enum=Condition.values),
@@ -134,8 +126,6 @@ def item(request, pk):
         "name": card.name,
         "set_code": card.set_code,
         "collector_number": card.collector_number,
-        "type_line": card.type_line,
-        "color": card.color,
         "condition": obj.condition,
         "language": obj.language,
         "foil": obj.foil,

@@ -5,9 +5,9 @@ from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, Colle
 
 @admin.register(Card)
 class CardAdmin(admin.ModelAdmin):
-    list_display = ["name", "set_code", "collector_number", "type_line", "color", "ct_blueprint_id"]
-    list_filter = ["color", "set_code"]
-    search_fields = ["name", "type_line"]
+    list_display = ["name", "set_code", "collector_number", "ct_blueprint_id"]
+    list_filter = ["set_code"]
+    search_fields = ["name"]
 
 
 @admin.register(CollectionItem)

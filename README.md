@@ -196,4 +196,4 @@ If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarde
 
 ## CSV
 
-Columns: `name,set,type,color,condition,language,foil,quantity,price,number` (`number` = collector number, optional: it identifies the exact printing).
+Columns: `name,set,condition,language,foil,quantity,price,number` (`number` = collector number, optional: it identifies the exact printing). Old files with `type` and `color` columns still import: those columns are ignored.

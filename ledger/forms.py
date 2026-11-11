@@ -1,7 +1,7 @@
 from django import forms
 
 from .catalog import normalize_number
-from .models import Card, CollectionItem, Color, Listing
+from .models import Card, CollectionItem, Listing
 
 
 def get_or_create_card(name, set_code, collector_number="", **defaults):
@@ -21,10 +21,7 @@ class CardItemForm(forms.ModelForm):
     name = forms.CharField(max_length=200)
     set_code = forms.CharField(label="Set", max_length=10)
     collector_number = forms.CharField(label="Collector number", max_length=40, required=False)
-    type_line = forms.CharField(label="Type", max_length=200, required=False)
-    color = forms.ChoiceField(choices=Color.choices, initial=Color.COLORLESS)
-
-    field_order = ["name", "set_code", "collector_number", "type_line", "color", "condition", "language", "foil", "quantity", "price"]
+    field_order = ["name", "set_code", "collector_number", "condition", "language", "foil", "quantity", "price"]
 
     class Meta:
         model = CollectionItem
@@ -38,7 +35,6 @@ class CardItemForm(forms.ModelForm):
             card = self.instance.card
             self.initial.update(
                 name=card.name, set_code=card.set_code, collector_number=card.collector_number,
-                type_line=card.type_line, color=card.color,
             )
 
     def clean_set_code(self):
@@ -49,17 +45,7 @@ class CardItemForm(forms.ModelForm):
 
     def save(self, commit=True):
         data = self.cleaned_data
-        card = get_or_create_card(
-            data["name"].strip(), data["set_code"], data["collector_number"],
-            type_line=data["type_line"], color=data["color"],
-        )
-        changed = False
-        for attr in ("type_line", "color"):
-            if data[attr] and getattr(card, attr) != data[attr]:
-                setattr(card, attr, data[attr])
-                changed = True
-        if changed:
-            card.save()
+        card = get_or_create_card(data["name"].strip(), data["set_code"], data["collector_number"])
         self.instance.card = card
         return super().save(commit=commit)
 

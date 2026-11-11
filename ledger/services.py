@@ -28,7 +28,6 @@ from .forms import get_or_create_card
 from .models import (
     Card,
     CollectionItem,
-    Color,
     Condition,
     Language,
     Listing,
@@ -39,7 +38,7 @@ from .models import (
     SyncService,
 )
 
-CSV_FIELDS = ["name", "set", "type", "color", "condition", "language", "foil", "quantity", "price", "number"]
+CSV_FIELDS = ["name", "set", "condition", "language", "foil", "quantity", "price", "number"]
 CARDTRADER = "CardTrader"
 
 
@@ -169,8 +168,6 @@ def export_csv(items, stream):
         writer.writerow([
             item.card.name,
             item.card.set_code,
-            item.card.type_line,
-            item.card.color,
             item.condition,
             item.language,
             "1" if item.foil else "0",
@@ -224,8 +221,6 @@ def import_csv(uploaded_file, owner):
                 row["name"],
                 row["set"].upper(),
                 normalize_number(row.get("number", "")),
-                type_line=row.get("type", ""),
-                color=_choice(row.get("color"), Color, Color.COLORLESS, "color", line),
             )
             item, item_created = CollectionItem.objects.get_or_create(
                 owner=owner,
