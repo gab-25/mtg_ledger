@@ -120,6 +120,13 @@ class SyncTest(CardmarketTestCase):
         self.assertTrue(box.is_product)
         self.assertFalse(Blueprint.objects.get(ct_id=1001).is_product)
 
+    def test_sync_marks_existing_cards_as_products(self):
+        card = Card.objects.create(name="Dominaria United Draft Booster Box", set_code="DMU",
+                                   collector_number="CT1390", ct_blueprint_id=1390)
+        self.sync()
+        card.refresh_from_db()
+        self.assertTrue(card.is_product)
+
     def test_long_collector_number_stored(self):
         # CardTrader numbers for some promo/anniversary printings, e.g. "10-013T/012-019T"
         self.ct.blueprints[next(iter(self.ct.blueprints))][0]["fixed_properties"]["collector_number"] = "10-013T/012-019T"

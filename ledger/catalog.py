@@ -106,6 +106,20 @@ def _blueprint_fields(bp, categories):
     }
 
 
+def refresh_product_flags(ct_ids):
+    """Align Card.is_product with the catalog for the cards of these blueprints (their category may be new)."""
+    from django.db.models import Exists, OuterRef, Q
+
+    from .models import CARD_CATEGORY_IDS, Blueprint, Card
+
+    product = Blueprint.objects.filter(ct_id=OuterRef("ct_blueprint_id"), category__isnull=False).filter(
+        ~Q(category__ct_id__in=CARD_CATEGORY_IDS)
+    )
+    cards = Card.objects.filter(ct_blueprint_id__in=list(ct_ids)).annotate(product=Exists(product))
+    return (cards.filter(product=True, is_product=False).update(is_product=True)
+            + cards.filter(product=False, is_product=True).update(is_product=False))
+
+
 def _mark_product(card, bp):
     if card.is_product != bp.is_product:
         card.is_product = bp.is_product
@@ -191,6 +205,7 @@ def ensure_blueprints(client, expansion, *, force=False):
             ct_id=bp["id"], defaults={"expansion": expansion, **_blueprint_fields(bp, categories)}
         )
         count += 1
+    refresh_product_flags(bp["id"] for bp in exported)
     expansion.blueprints_synced_at = timezone.now()
     expansion.save(update_fields=["blueprints_synced_at"])
     return count

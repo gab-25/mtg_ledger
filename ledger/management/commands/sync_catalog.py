@@ -5,7 +5,7 @@ from ledger.models import Expansion
 
 
 class Command(BaseCommand):
-    help = "Refresh the local CardTrader catalog (expansions, and blueprints with --set or --all)."
+    help = "Refresh the local CardTrader catalog (expansions, categories, and blueprints with --set or --all)."
 
     def add_arguments(self, parser):
         parser.add_argument("--set", dest="set_code", help="Reload the blueprints of one expansion (code)")
@@ -15,6 +15,7 @@ class Command(BaseCommand):
         with services.service_client() as client:
             count = catalog.sync_expansions(client)
             self.stdout.write(f"{count} expansions")
+            self.stdout.write(f"{catalog.sync_categories(client)} categories")
             if set_code:
                 expansion = catalog.expansion_by_code(set_code)
                 if expansion is None:

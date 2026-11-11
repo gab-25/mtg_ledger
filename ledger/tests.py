@@ -382,6 +382,33 @@ class ItemTest(LedgerTestCase):
         item = CollectionItem.objects.get(pk=first.json()["id"])
         self.assertEqual((item.quantity, item.price), (3, Decimal("10.00")))
 
+    def test_add_with_existing_duplicate_stacks_merges_into_the_oldest(self):
+        first = CollectionItem.objects.get(pk=add(self, 1390, quantity=1).json()["id"])
+        twin = CollectionItem.objects.create(owner=self.user, card=first.card, condition="NM", language="EN",
+                                             quantity=4, price=Decimal("1.00"))  # made by the old free-text form
+        resp = add(self, 1390, quantity=2)
+        self.assertEqual((resp.status_code, resp.json()["id"]), (200, first.pk))
+        first.refresh_from_db()
+        twin.refresh_from_db()
+        self.assertEqual((first.quantity, twin.quantity), (3, 4))
+
+    def test_add_product_without_language_field(self):
+        resp = self.client.post(reverse("ledger:api_collection"), {"blueprint": 1391, "quantity": 1, "price": "5.00"},
+                                content_type="application/json")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(CollectionItem.objects.get(pk=resp.json()["id"]).language, "EN")
+
+    def test_card_added_before_categories_becomes_product_on_resync(self):
+        from . import catalog
+        from .models import Blueprint, Expansion
+
+        Blueprint.objects.filter(ct_id=1390).update(category=None)  # catalog loaded before this feature
+        card = CollectionItem.objects.get(pk=add(self, 1390).json()["id"]).card
+        self.assertFalse(card.is_product)
+        catalog.ensure_blueprints(self.ct.client(), Expansion.objects.get(ct_id=13), force=True)
+        card.refresh_from_db()
+        self.assertTrue(card.is_product)
+
     def test_unknown_blueprint_is_400(self):
         resp = add(self, 999999)
         self.assertEqual(resp.status_code, 400)

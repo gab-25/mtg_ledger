@@ -14,7 +14,7 @@ import httpx
 
 from . import services
 from .cardtrader import MTG_GAME_ID, CardTraderError
-from .catalog import _blueprint_fields, category_pks, normalize_number
+from .catalog import _blueprint_fields, category_pks, normalize_number, refresh_product_flags
 from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, SyncLog
 
 PRICE_GUIDE_URL = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_1.json"
@@ -212,6 +212,7 @@ def sync(cm_client, ct_client):
                     "category", "editable_properties",
                 ],
             )
+            refresh_product_flags(objs.keys())
             Expansion.objects.filter(ct_id__in=exports.keys()).update(blueprints_synced_at=now)
             CardmarketPrice.objects.bulk_create(
                 prices.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["id_product"],

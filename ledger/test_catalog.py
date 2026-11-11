@@ -28,6 +28,10 @@ class CatalogTest(LedgerTestCase):
         self.assertEqual(catalog.expansion_by_code("NEO").ct_id, 11)
         self.assertIsNone(catalog.expansion_by_code("zzz"))
 
+    def test_command_loads_category_names(self):
+        call_command("sync_catalog", "--set", "dmu", stdout=StringIO())
+        self.assertEqual(Category.objects.get(ct_id=4).name, "Booster Boxes")
+
     def test_command_set(self):
         call_command("sync_catalog", "--set", "mh2", stdout=StringIO())
         self.assertEqual(Blueprint.objects.filter(expansion__code="mh2").count(), 4)
