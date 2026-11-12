@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -184,9 +186,47 @@ class CatalogApiTest(LedgerTestCase):
         [ugin] = self.search(q="Ugin")["results"]
         self.assertIsNone(ugin["owned_qty"])
 
-    def test_no_criteria_lists_nothing(self):
+    def test_no_criteria_lists_latest_releases(self):
         data = self.search(q="  ")
-        self.assertEqual(data, {"searched": False, "filters": {"q": "", "set": "", "number": "", "category": None, "owned": False}})
+        self.assertFalse(data["searched"])
+        self.assertEqual(data["filters"], {"q": "", "set": "", "number": "", "category": None, "owned": False})
+        # newest expansion (highest CardTrader id) first, then name like a search
+        self.assertEqual([(p["expansion_code"], p["name"]) for p in data["results"]], [
+            ("dmr", "Counterspell"), ("dmr", "Dominaria Remastered Draft Booster Box"),
+            ("dmr", "Dominaria Remastered Playmat"),
+            ("m21", "Basri Ket"), ("m21", "Ugin, the Spirit Dragon"),
+        ])
+        self.assertEqual((data["count"], data["page"], data["num_pages"]), (5, 1, 1))
+        self.assertIsNotNone(data["prices_date"])
+
+    def test_latest_releases_rows_match_a_search(self):
+        self.own(3, ct_blueprint_id=9001)
+        latest = {p["ct_id"]: p for p in self.search()["results"]}
+        [ugin] = self.search(q="Ugin")["results"]
+        self.assertEqual(latest[9001], ugin)
+        self.assertEqual(ugin["owned_qty"], 3)
+
+    def test_latest_releases_paginate(self):
+        newest = Expansion.objects.create(ct_id=999, code="new", name="Newest Set")
+        Blueprint.objects.bulk_create(
+            Blueprint(ct_id=30000 + i, expansion=newest, name=f"Card {i:02}") for i in range(52)
+        )
+        first, second = self.search(), self.search(page="2")
+        self.assertFalse(second["searched"])
+        self.assertEqual((second["count"], second["page"], second["num_pages"]), (57, 2, 2))
+        self.assertEqual({p["expansion_code"] for p in first["results"]}, {"new"})
+        self.assertEqual([p["expansion_code"] for p in second["results"][-5:]], ["dmr"] * 3 + ["m21"] * 2)
+
+    def test_latest_releases_query_count_does_not_grow_with_rows(self):
+        def queries():
+            with CaptureQueriesContext(connection) as ctx:
+                self.search()
+            return len(ctx.captured_queries)
+
+        before = queries()
+        m21 = Expansion.objects.get(code="m21")
+        Blueprint.objects.bulk_create(Blueprint(ct_id=40000 + i, expansion=m21, name=f"Extra {i}") for i in range(20))
+        self.assertEqual(queries(), before)
 
     def test_no_results_message(self):
         data = self.search(q="zzzz")
