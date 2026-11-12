@@ -1,6 +1,6 @@
 # The React UI (gab-25/mtg_ledger_ui), pinned to a release: its Release workflow publishes the built app as a
 # scratch image. Bump UI_VERSION to ship a new interface (or override it with --build-arg).
-ARG UI_VERSION=0.4.0
+ARG UI_VERSION=0.5.0
 FROM ghcr.io/gab-25/mtg_ledger_ui:${UI_VERSION} AS ui
 
 FROM python:3.14-slim
