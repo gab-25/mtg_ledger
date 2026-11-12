@@ -25,7 +25,8 @@ def _category(value):
         return None
 
 
-@doc(TAGS, "Search the catalog by ?q (name or set code), set, number, category, owned=1; page", parameters=[
+@doc(TAGS, "Search the catalog by ?q (name or set code), set, number, category, owned=1; page. With no filter "
+           "(searched: false) it lists the latest releases: the products of the newest expansions first", parameters=[
     query("q", "Name, or exact set code"),
     query("set", "Exact set code"),
     query("number", "Collector number"),
@@ -42,11 +43,16 @@ def catalog(request):
     category = _category(params.get("category"))
     owned = params.get("owned") == "1"
     filters = {"q": q, "set": set_code, "number": number, "category": category, "owned": owned}
-    if not (q or set_code or number or category is not None or owned):
-        return Response({"searched": False, "filters": filters})
+    searched = bool(q or set_code or number or category is not None or owned)
 
     owned_qty = cardmarket.owned_quantities(request.user)
-    printings = Blueprint.objects.select_related("expansion", "cm_price", "category").order_by("name", "expansion__code")
+    printings = Blueprint.objects.select_related("expansion", "cm_price", "category")
+    if searched:
+        printings = printings.order_by("name", "expansion__code")
+    else:
+        # Latest releases: Expansion has no release date, and CardTrader ids grow over time (not strictly by
+        # release), so the newest expansion is the one with the highest CardTrader id.
+        printings = printings.order_by("-expansion__ct_id", "name", "expansion__code", "ct_id")
     if q:
         printings = printings.filter(Q(name__icontains=q) | Q(expansion__code__iexact=q))
     if set_code:
@@ -77,7 +83,7 @@ def catalog(request):
         }
 
     return Response({
-        "searched": True,
+        "searched": searched,
         "filters": filters,
         **page_payload(request, printings, printing),
         "prices_date": CardmarketPrice.objects.aggregate(d=Max("prices_date"))["d"],
