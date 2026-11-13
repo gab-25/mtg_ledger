@@ -1,7 +1,13 @@
-# The React UI (gab-25/mtg_ledger_ui), pinned to a release: its Release workflow publishes the built app as a
-# scratch image. Bump UI_VERSION to ship a new interface (or override it with --build-arg).
-ARG UI_VERSION=0.5.0
-FROM ghcr.io/gab-25/mtg_ledger_ui:${UI_VERSION} AS ui
+# syntax=docker/dockerfile:1
+
+# The React UI (gab-25/mtg_ledger_ui), built from the `ui` git submodule at the commit it is pinned to:
+# check it out first (`git submodule update --init`, or actions/checkout with `submodules: true`).
+FROM node:26-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
 
 FROM python:3.14-slim
 
@@ -20,9 +26,9 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
-COPY . .
+COPY --exclude=ui . .
 
-COPY --from=ui / /app/ui_app
+COPY --from=ui /ui/dist /app/ui/dist
 
 RUN python manage.py collectstatic --noinput
 

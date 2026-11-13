@@ -34,16 +34,18 @@ uv run python manage.py runserver
 
 Tests: `uv run python manage.py test`
 
-The pages come from the React UI: build it once and point `UI_APP_DIR` at it (default `ui_app/` in the project,
-gitignored). Without an `index.html` there every page answers *UI not built*.
+The pages come from the React UI, a git submodule in `ui/` pinned to a commit of mtg_ledger_ui: build it once and
+Django serves `ui/dist` (set `UI_APP_DIR` to serve another build). Without an `index.html` there every page answers
+*UI not built*.
 
 ```bash
-(cd ../mtg_ledger_ui && npm install && npm run build)
-UI_APP_DIR=../mtg_ledger_ui/dist uv run python manage.py runserver
+git submodule update --init                     # or clone with --recurse-submodules
+(cd ui && npm ci && npm run build)
+uv run python manage.py runserver
 ```
 
-To work on the interface, run Django as above (no `UI_APP_DIR` needed) and `npm run dev` in mtg_ledger_ui: Vite
-serves the whole site with live reload and forwards `/api/`, `/admin/` and `/static/` to Django.
+To work on the interface, run Django as above and `npm run dev` in `ui/` (or in a separate mtg_ledger_ui checkout):
+Vite serves the whole site with live reload and forwards `/api/`, `/admin/` and `/static/` to Django.
 
 ## Docker
 
@@ -156,10 +158,9 @@ are created as *To publish*).
   "help_url"?}`, with `code` such as `not_authenticated` (403), `not_found`, `closed` (409: the session was already
   saved), `blocked` (409), `service_missing` (503) or `service_error` (502: CardTrader failed). Actions answer
   `{"messages": [{"level", "text"}]}`, shown by the UI like Django's messages.
-- The Docker image copies the UI from a pinned release of mtg_ledger_ui's scratch image
-  (`ghcr.io/gab-25/mtg_ledger_ui:X.Y.Z`, `UI_VERSION` in the `Dockerfile`): to ship a new version of the interface,
-  publish a release in mtg_ledger_ui, bump `UI_VERSION` and rebuild. `docker build --build-arg UI_VERSION=X.Y.Z .`
-  tries another release without editing the file.
+- The Docker image builds the UI from the `ui` submodule (a Node stage in the `Dockerfile`), so the submodule must be
+  checked out before `docker build`. To ship a new version of the interface, move the submodule to its release tag
+  and commit it: `git -C ui fetch --tags && git -C ui checkout vX.Y.Z && git add ui`.
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
   needs both.
@@ -194,7 +195,7 @@ real certificate that only your own devices can reach; mtg_ledger_ui's `npm run 
    **Scan cards** and scan the QR code with the phone.
 
 To try the production setup instead (Django serving the built UI, as in the Docker image), build it with
-`npm run build` in mtg_ledger_ui, start Django with `UI_APP_DIR` pointing at its `dist/` and expose port 8000
+`npm run build` in `ui/`, start Django (it serves `ui/dist` by default) and expose port 8000
 with `tailscale serve --https=443 8000`.
 
 If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarded-Proto`.

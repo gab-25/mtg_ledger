@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MTG Ledger server: a Django 6 + Django REST Framework app (Python 3.14, managed with `uv`) that holds a Magic: The
 Gathering collection and manages CardTrader sales. It exposes only a JSON API under `/api/`; the interface is a
-separate React SPA ([mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui)), whose built `index.html` Django serves
-for every other URL (`config/views.py`, catch-all route last in `config/urls.py`, files from `UI_APP_DIR`).
+separate React SPA ([mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui)), included as the git submodule `ui/`
+(pinned to a release tag; the Dockerfile builds it in a Node stage), whose built `index.html` Django serves for every
+other URL (`config/views.py`, catch-all route last in `config/urls.py`, files from `UI_APP_DIR`, default `ui/dist`).
 
 ## Commands
 
@@ -15,7 +16,8 @@ for every other URL (`config/views.py`, catch-all route last in `config/urls.py`
 docker compose up -d db                          # PostgreSQL (required, also for tests)
 uv sync
 uv run python manage.py migrate
-uv run python manage.py runserver                # pages need a UI build: UI_APP_DIR=../mtg_ledger_ui/dist
+git submodule update --init && (cd ui && npm ci && npm run build)   # the UI build Django serves
+uv run python manage.py runserver
 
 uv run python manage.py test                                      # all tests
 uv run python manage.py test ledger.test_scan_api                 # one module
@@ -82,4 +84,5 @@ with demo data and a CardTrader token, a second user `ami`, and `FakeCardTrader`
   to multi-user upgrade.
 - `docs/superpowers/` is gitignored (local design notes): never commit it.
 - Work on a branch in the main checkout; PRs are squash-merged into `main` and named after the change.
-  Releases (GitHub release → Docker image on ghcr.io) bump `version` in `pyproject.toml`.
+  Releases (GitHub release → Docker image on ghcr.io) bump `version` in `pyproject.toml` and move the `ui` submodule
+  to the matching mtg_ledger_ui tag.

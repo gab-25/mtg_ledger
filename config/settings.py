@@ -147,8 +147,9 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # The built React UI (gab-25/mtg_ledger_ui): index.html is served for every page URL, its assets under
-# /static/ui/ (the Vite build uses base "/static/ui/"). The Docker image unpacks a release here.
-UI_APP_DIR = Path(os.environ.get('UI_APP_DIR') or BASE_DIR / 'ui_app').resolve()
+# /static/ui/ (the Vite build uses base "/static/ui/"). By default the build of the `ui` git submodule, which the
+# Docker image builds too.
+UI_APP_DIR = Path(os.environ.get('UI_APP_DIR') or BASE_DIR / 'ui' / 'dist').resolve()
 if UI_APP_DIR.is_dir():
     STATICFILES_DIRS = [('ui', UI_APP_DIR)]
 
