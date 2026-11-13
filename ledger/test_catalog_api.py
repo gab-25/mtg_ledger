@@ -239,3 +239,97 @@ class CatalogApiTest(LedgerTestCase):
         )
         data = self.search(set="tm21", page="2")
         self.assertEqual((data["count"], data["page"], data["num_pages"], len(data["results"])), (60, 2, 2, 10))
+
+
+class SmartSearchTest(LedgerTestCase):
+    def setUp(self):
+        super().setUp()
+        catalog()
+        self.url = reverse("ledger:api_catalog")
+        m21, dmr = Expansion.objects.get(code="m21"), Expansion.objects.get(code="dmr")
+        single, boxes = Category.objects.get(ct_id=1), Category.objects.get(ct_id=4)
+        for ct_id, exp, name, number, category in [
+            (9101, m21, "Mother of Runes", "10", single),
+            (9102, dmr, "Queen Mother Ramonda", "20", single),
+            (9103, dmr, "Lim-Dûl the Necromancer", "30", single),
+            (9104, dmr, "Urza's Saga", "123", single),
+            (9105, dmr, "Mother of Runes Playmat", "", boxes),
+            (9106, dmr, "Mother of Prunes", "40", single),
+        ]:
+            Blueprint.objects.create(ct_id=ct_id, expansion=exp, name=name, collector_number=number,
+                                     category=category)
+
+    def search(self, **params):
+        resp = self.client.get(self.url, params)
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def names(self, **params):
+        return [p["name"] for p in self.search(**params)["results"]]
+
+    def test_words_in_any_order_and_prefix(self):
+        self.assertEqual(self.names(q="mother rune"), ["Mother of Runes", "Mother of Runes Playmat"])
+        self.assertEqual(self.names(q="rune mother"), ["Mother of Runes", "Mother of Runes Playmat"])
+
+    def test_word_must_start_a_word(self):
+        self.assertNotIn("Mother of Prunes", self.names(q="mother rune"))
+
+    def test_case_accents_and_punctuation(self):
+        self.assertEqual(self.names(q="LIM DUL"), ["Lim-Dûl the Necromancer"])
+        self.assertEqual(self.names(q="lim-dûl"), ["Lim-Dûl the Necromancer"])
+        self.assertEqual(self.names(q="urzas"), ["Urza's Saga"])
+        self.assertEqual(self.names(q="Urza's Saga"), ["Urza's Saga"])
+
+    def test_set_code_in_query(self):
+        self.assertEqual(self.names(q="mother m21"), ["Mother of Runes"])
+        self.assertEqual(self.names(q="M21"), ["Basri Ket", "Mother of Runes", "Ugin, the Spirit Dragon"])
+
+    def test_number_needs_a_set_code(self):
+        self.assertEqual(self.names(q="dmr 123"), ["Urza's Saga"])
+        self.assertEqual(self.names(q="123"), [])
+
+    def test_regex_characters_are_harmless(self):
+        self.search(q="bolt.*(")
+
+    def test_blank_words_do_not_filter(self):
+        self.assertEqual(self.search(q=" -' ")["count"], Blueprint.objects.count())
+
+    def test_exact_name_first_then_cards_before_products(self):
+        Blueprint.objects.create(ct_id=9107, expansion=Expansion.objects.get(code="m21"), name="Mother",
+                                 category=Category.objects.get(ct_id=1))
+        names = self.names(q="mother")
+        self.assertEqual(names[0], "Mother")
+        # same relevance: the card before the product, although the product's expansion is newer
+        self.assertEqual(self.names(q="runes"), ["Mother of Runes", "Mother of Runes Playmat"])
+
+    def test_typo_fallback(self):
+        self.assertEqual(self.names(q="mothr rnes")[0], "Mother of Runes")
+
+    def test_fallback_respects_filters(self):
+        self.assertNotIn("Mother of Runes", self.names(q="mothr rnes", set="dmr"))
+
+    def test_no_fallback_when_words_match(self):
+        with CaptureQueriesContext(connection) as ctx:
+            self.search(q="mother rune")
+        self.assertFalse(any("word_similarity" in q["sql"].lower() for q in ctx.captured_queries))
+
+    def test_nonsense_finds_nothing(self):
+        self.assertEqual(self.names(q="zzzxqv"), [])
+
+    def test_hyphenated_set_code(self):
+        sld = Expansion.objects.create(ct_id=502, code="sld-cvd", name="Secret Lair: CVD")
+        Blueprint.objects.create(ct_id=9201, expansion=sld, name="Cool Card", collector_number="1")
+        self.assertEqual(self.names(q="sld-cvd"), ["Cool Card"])
+        self.assertEqual(self.names(q="SLD-CVD cool"), ["Cool Card"])
+
+    def test_exact_name_with_transliterated_letters(self):
+        Blueprint.objects.create(ct_id=9202, expansion=Expansion.objects.get(code="dmr"), name="Sœur Weiß")
+        self.assertEqual(self.names(q="Sœur Weiß"), ["Sœur Weiß"])
+
+    def test_typo_with_set_code(self):
+        self.assertEqual(self.names(q="mothr rnes m21"), ["Mother of Runes"])
+
+    def test_number_belongs_to_the_named_set(self):
+        Blueprint.objects.create(ct_id=9203, expansion=Expansion.objects.get(code="m21"), name="Dmr Golem",
+                                 collector_number="1")
+        self.assertNotIn("Dmr Golem", self.names(q="dmr 1"))
