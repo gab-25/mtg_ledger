@@ -1,4 +1,4 @@
-"""Celery app. Tasks are queued by management commands (e.g. sync_cardmarket); no beat schedule is configured."""
+"""Celery app. Tasks are queued by management commands (e.g. sync_catalog); no beat schedule is configured."""
 
 import os
 

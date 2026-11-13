@@ -180,7 +180,7 @@ class SyncTest(CardmarketTestCase):
         self.assertFalse(Blueprint.objects.exists())
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
-        self.assertIn("Cardmarket sync failed", log.message)
+        self.assertIn("Catalog sync failed", log.message)
 
     def test_malformed_guide_changes_nothing(self):
         self.guide.raw = b"not json"
@@ -191,7 +191,7 @@ class SyncTest(CardmarketTestCase):
         with mock.patch.object(FakeCardTrader, "handler", lambda s, r: httpx.Response(500, json={})):
             self.assertIsNone(cardmarket.run_sync(self.cm))
         self.assertFalse(CardmarketPrice.objects.exists())
-        self.assertIn("Cardmarket sync failed", SyncLog.objects.first().message)
+        self.assertIn("Catalog sync failed", SyncLog.objects.first().message)
 
     def test_missing_cardtrader_token_logs_warning(self):
         services.make_client.side_effect = services.CardTraderError("CardTrader API token is not configured.")
@@ -204,7 +204,7 @@ class SyncTest(CardmarketTestCase):
                 cardmarket.run_sync(self.cm)
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
-        self.assertEqual(log.message, "Cardmarket sync failed: RuntimeError: db down")
+        self.assertEqual(log.message, "Catalog sync failed: RuntimeError: db down")
 
     def test_run_sync_logs_counts_and_unlinked_cards(self):
         Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45")
@@ -215,7 +215,7 @@ class SyncTest(CardmarketTestCase):
         self.assertEqual(log.level, SyncLog.Level.OK)
         self.assertEqual(
             log.message,
-            "Cardmarket: 4 expansions, 10 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
+            "Catalog sync: 4 expansions, 10 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
         )
 
     def test_run_sync_mentions_failed_expansions(self):
@@ -230,19 +230,19 @@ class SyncCommandTest(TestCase):
     def test_command_only_enqueues(self):
         from . import tasks
 
-        with mock.patch.object(tasks.sync_cardmarket, "delay", return_value=mock.Mock(id="abc")) as delay, \
+        with mock.patch.object(tasks.sync_catalog, "delay", return_value=mock.Mock(id="abc")) as delay, \
                 mock.patch.object(cardmarket, "run_sync") as run:
             out = StringIO()
-            call_command("sync_cardmarket", stdout=out)
+            call_command("sync_catalog", stdout=out)
         delay.assert_called_once_with()
         run.assert_not_called()
-        self.assertIn("Cardmarket sync queued (task abc)", out.getvalue())
+        self.assertIn("Catalog sync queued (task abc)", out.getvalue())
 
     def test_task_runs_sync(self):
         from . import tasks
 
         with mock.patch.object(cardmarket, "run_sync") as run:
-            tasks.sync_cardmarket.apply()
+            tasks.sync_catalog.apply()
         run.assert_called_once_with()
 
     def test_no_beat_schedule(self):

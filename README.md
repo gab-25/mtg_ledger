@@ -127,17 +127,18 @@ printing. It uses the administrator's CardTrader token (Profile and settings).
 - **Listing form**: the Cardmarket trend (foil trend for foil copies) is suggested next to the CardTrader market
   price; "Use" copies it into the price field.
 
-The sync runs on a Celery worker (Redis broker). `sync_cardmarket` only queues it; schedule it every night after
+The sync runs on a Celery worker (Redis broker). `sync_catalog` only queues it; schedule it every night after
 03:00 (Cardmarket regenerates the price guide around 02:45 CET) with the scheduler of your choice.
 
 ```bash
 docker compose up -d redis
 uv run celery -A config worker --loglevel=info      # the worker
-uv run python manage.py sync_cardmarket             # queue a sync (outcome in Sync → Activity log)
+uv run python manage.py sync_catalog                # queue a sync (outcome in Sync → Activity log)
+uv run python manage.py sync_catalog --set CODE     # reload one expansion now, without the worker
 ```
 
 With Docker Compose the `worker` and `redis` services start with the stack; queue a sync with
-`docker compose exec mtg_ledger python manage.py sync_cardmarket`.
+`docker compose exec mtg_ledger python manage.py sync_catalog`.
 
 ## Scanning cards with the camera
 
@@ -164,7 +165,8 @@ are created as *To publish*).
 - OpenRouter is configured only on the server, through `OPENROUTER_API_KEY` (it cannot be set from the profile);
   `OPENROUTER_MODEL` picks the vision model (e.g. `qwen/qwen3.8-flash`) and has no default: card recognition
   needs both.
-- The catalog loads lazily from CardTrader; `uv run python manage.py sync_catalog [--set CODE | --all]` refreshes it.
+- The catalog loads lazily from CardTrader and is refreshed by the nightly sync; `uv run python manage.py
+  sync_catalog --set CODE` reloads one expansion right away.
 - The camera works on **smartphones only** (webcams can't focus on a card up close). A session started on a
   computer shows a **QR code** that opens the same session on the phone; Review, confirmation and search work on
   both.

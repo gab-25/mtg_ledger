@@ -207,6 +207,6 @@ LOGOUT_REDIRECT_URL = '/login/'
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', '')
 
-# Celery (the Cardmarket sync runs on a worker; scheduling is external, no beat)
+# Celery (the catalog sync runs on a worker; scheduling is external, no beat)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_TASK_IGNORE_RESULT = True

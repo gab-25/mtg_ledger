@@ -230,7 +230,7 @@ def sync(cm_client, ct_client):
 
 def _summary(result):
     message = (
-        f"Cardmarket: {result.expansions} expansions, {result.blueprints} printings, {result.priced} priced "
+        f"Catalog sync: {result.expansions} expansions, {result.blueprints} printings, {result.priced} priced "
         f"(guide {result.guide_date:%Y-%m-%d}), {result.linked} cards linked, {result.unlinked} not linked"
     )
     if result.failed:
@@ -248,13 +248,13 @@ def run_sync(cm_client=None):
         ct_client = services.service_client()
         result = sync(cm_client, ct_client)
     except (CardmarketError, CardTraderError) as exc:
-        SyncLog.objects.create(message=f"Cardmarket sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)
+        SyncLog.objects.create(message=f"Catalog sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)
         return None
     except Exception as exc:
         # Unexpected (database, bug): still visible in the Activity log, and the task is marked failed.
-        logger.exception("Cardmarket sync failed")
+        logger.exception("Catalog sync failed")
         SyncLog.objects.create(
-            message=f"Cardmarket sync failed: {type(exc).__name__}: {exc}"[:300], level=SyncLog.Level.WARNING
+            message=f"Catalog sync failed: {type(exc).__name__}: {exc}"[:300], level=SyncLog.Level.WARNING
         )
         raise
     finally:

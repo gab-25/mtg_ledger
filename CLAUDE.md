@@ -29,8 +29,8 @@ uv run python manage.py makemigrations --check --dry-run
 uv run python manage.py spectacular --validate --fail-on-warn --file /dev/null   # OpenAPI schema check
 
 docker compose up -d redis && uv run celery -A config worker --loglevel=info     # Cardmarket sync worker
-uv run python manage.py sync_cardmarket          # queue the nightly catalog + price sync
-uv run python manage.py sync_catalog [--set CODE | --all]
+uv run python manage.py sync_catalog             # queue the nightly catalog + price sync
+uv run python manage.py sync_catalog --set CODE  # reload one expansion now (no worker)
 ```
 
 There is no linter or formatter configured. Settings come only from the environment / `.env` (see `.env.example`);
