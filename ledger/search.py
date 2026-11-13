@@ -3,13 +3,19 @@ collector numbers, accents, case and punctuation ignored, results ordered by rel
 
 import re
 import unicodedata
+from functools import reduce
+from operator import add
 
+from django.contrib.postgres.search import TrigramSimilarity, TrigramWordSimilarity
 from django.db.models import Case, CharField, Func, IntegerField, Q, Value, When
 
 from .catalog import normalize_number
 from .models import CARD_CATEGORY_IDS, Expansion
 
 _NUMBER = re.compile(r"\d+[a-z]?")
+# Minimum pg_trgm word similarity of every query word to the name in the typo-tolerant fallback, run only when no
+# blueprint matches the words.
+FUZZY_THRESHOLD = 0.4
 
 
 class SearchText(Func):
@@ -48,7 +54,8 @@ def _tie_breaks():
 
 
 def search_blueprints(queryset, q):
-    """The blueprints of the queryset matching every word of q, most relevant first."""
+    """The blueprints of the queryset matching every word of q, most relevant first; when none does, the ones whose
+    name is close to q (typos), most similar first."""
     words = normalize(q).split()
     phrase = " ".join(words)
     codes = set(Expansion.objects.filter(code__in=words).values_list("code", flat=True))
@@ -56,6 +63,19 @@ def search_blueprints(queryset, q):
         When(st=phrase, then=Value(0)), When(st__startswith=phrase, then=Value(1)),
         default=Value(2), output_field=IntegerField(),
     )
-    return (queryset.alias(st=SearchText("name"))
-            .filter(*(_word_condition(w, codes) for w in words))
-            .order_by(rank, *_tie_breaks()))
+    matches = (queryset.alias(st=SearchText("name"))
+               .filter(*(_word_condition(w, codes) for w in words))
+               .order_by(rank, *_tie_breaks()))
+    if not words or matches.exists():
+        return matches
+    return _fuzzy(queryset, words, phrase)
+
+
+def _fuzzy(queryset, words, phrase):
+    """Every word close to a word of the name; the closest words first, then the name closest to the whole query
+    (so "Lightning Bolt" before "Art Series: Lightning Bolt")."""
+    sims = {f"sim{i}": TrigramWordSimilarity(Value(w), SearchText("name")) for i, w in enumerate(words)}
+    return (queryset.alias(**sims)
+            .filter(**{f"{k}__gte": FUZZY_THRESHOLD for k in sims})
+            .alias(total=reduce(add, sims.values()), whole=TrigramSimilarity(Value(phrase), SearchText("name")))
+            .order_by("-total", "-whole", *_tie_breaks()))

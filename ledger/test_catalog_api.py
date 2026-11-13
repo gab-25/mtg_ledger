@@ -293,3 +293,25 @@ class SmartSearchTest(LedgerTestCase):
 
     def test_blank_words_do_not_filter(self):
         self.assertEqual(self.search(q=" -' ")["count"], Blueprint.objects.count())
+
+    def test_exact_name_first_then_cards_before_products(self):
+        Blueprint.objects.create(ct_id=9107, expansion=Expansion.objects.get(code="m21"), name="Mother",
+                                 category=Category.objects.get(ct_id=1))
+        names = self.names(q="mother")
+        self.assertEqual(names[0], "Mother")
+        # same relevance: the card before the product, although the product's expansion is newer
+        self.assertEqual(self.names(q="runes"), ["Mother of Runes", "Mother of Runes Playmat"])
+
+    def test_typo_fallback(self):
+        self.assertEqual(self.names(q="mothr rnes")[0], "Mother of Runes")
+
+    def test_fallback_respects_filters(self):
+        self.assertNotIn("Mother of Runes", self.names(q="mothr rnes", set="dmr"))
+
+    def test_no_fallback_when_words_match(self):
+        with CaptureQueriesContext(connection) as ctx:
+            self.search(q="mother rune")
+        self.assertFalse(any("word_similarity" in q["sql"].lower() for q in ctx.captured_queries))
+
+    def test_nonsense_finds_nothing(self):
+        self.assertEqual(self.names(q="zzzxqv"), [])
