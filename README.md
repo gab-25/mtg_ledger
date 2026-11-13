@@ -93,7 +93,7 @@ the old image, or with a one-off container of the new one, e.g.
 ## CardTrader
 
 Every user connects their own CardTrader token from **Profile and settings → Connected services** (the token is checked
-with CardTrader before it is saved, and never shown again); it is used only for that user's listings, orders and
+with CardTrader before it is saved; only its owner can show or copy it there); it is used only for that user's listings, orders and
 shipments, and a CardTrader account can be connected to one user only. The administrator's token (the first superuser
 with one) also loads the shared card catalog and prices and recognises everyone's scanned cards, so it must be connected
 for scanning to work. `CARDTRADER_API_TOKEN` is no longer read (nor passed by `compose.yaml`): on upgrade, if it is
