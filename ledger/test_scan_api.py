@@ -684,7 +684,7 @@ class SchemaTest(LedgerTestCase):
         self.assertEqual(body("/api/account/password/", "post")["application/json"],
                          {"old_password", "new_password1", "new_password2"})
         self.assertEqual(body("/api/account/cardtrader-token/", "put")["application/json"], {"token"})
-        for path in ("/api/auth/logout/", "/api/listings/publish/", "/api/listings/match-prices/",
+        for path in ("/api/auth/logout/", "/api/listings/publish/",
                      "/api/orders/import/", "/api/sync/run/"):
             self.assertEqual(body(path, "post"), {}, path)
 

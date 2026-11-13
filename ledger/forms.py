@@ -76,7 +76,7 @@ class ItemForm(forms.ModelForm):
 class ListingForm(forms.ModelForm):
     class Meta:
         model = Listing
-        fields = ["quantity", "price", "market_price", "status"]
+        fields = ["quantity", "price", "status"]
 
     def clean_quantity(self):
         qty = self.cleaned_data["quantity"]

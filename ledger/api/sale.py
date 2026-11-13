@@ -35,7 +35,6 @@ def _row(listing):
         "foil": item.foil,
         "quantity": listing.quantity,
         "price": _money(listing.price),
-        "market_price": _money(listing.market_price),
         "badge": listing_badge(listing.status),
     }
 
@@ -105,7 +104,7 @@ def listing(request, item_pk):
         },
         "listing": {
             "exists": obj.pk is not None, "quantity": obj.quantity, "price": _money(obj.price),
-            "market_price": _money(obj.market_price), "status": obj.status,
+            "status": obj.status,
         },
         "cm_suggestion": _money(cardmarket.suggested_price(item.card, item.foil)),
     })
@@ -122,15 +121,3 @@ def publish(request):
     msgs = [msg("success", f"Published {n} listing{'s' if n != 1 else ''} to CardTrader.")]
     msgs += [msg("warning", f"{l.item.card.name}: {reason}") for l, reason in result.failed]
     return messages_response(*msgs)
-
-
-@doc(TAGS, "Set listing prices to the CardTrader market price")
-@api_view(["POST"])
-def match_prices(request):
-    try:
-        count = services.match_market_prices(request.user)
-    except CardTraderError as exc:
-        raise ServiceError(f"Could not read market prices: {exc}")
-    return messages_response(
-        msg("success", f"{count} prices matched to market." if count else "All prices already match the market.")
-    )

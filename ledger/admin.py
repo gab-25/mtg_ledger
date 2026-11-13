@@ -21,7 +21,7 @@ class CollectionItemAdmin(admin.ModelAdmin):
 
 @admin.register(Listing)
 class ListingAdmin(admin.ModelAdmin):
-    list_display = ["item", "quantity", "price", "market_price", "status", "ct_product_id"]
+    list_display = ["item", "quantity", "price", "status", "ct_product_id"]
     list_filter = ["status"]
 
 
