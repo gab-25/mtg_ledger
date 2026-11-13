@@ -1,7 +1,7 @@
 from django.db import connection
-from django.test import SimpleTestCase, TestCase
+from django.test import TestCase
 
-from .search import normalize
+from .search import normalize_all
 
 CASES = [
     ("Lim-Dûl the Necromancer", "lim dul the necromancer"),
@@ -18,8 +18,6 @@ class SearchTextSqlTest(TestCase):
                 cursor.execute("SELECT ledger_search_text(%s)", [name])
                 self.assertEqual(cursor.fetchone()[0], expected, name)
 
-
-class NormalizeTest(SimpleTestCase):
-    def test_matches_the_sql_function(self):
-        for name, expected in CASES:
-            self.assertEqual(normalize(name), expected, name)
+    def test_normalize_all_uses_the_sql_function(self):
+        self.assertEqual(normalize_all(["Sœur Weiß", "Lim-Dûl"]), ["soeur weiss", "lim dul"])
+        self.assertEqual(normalize_all([]), [])

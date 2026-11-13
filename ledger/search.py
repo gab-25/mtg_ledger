@@ -2,11 +2,12 @@
 collector numbers, accents, case and punctuation ignored, results ordered by relevance."""
 
 import re
-import unicodedata
+from collections import defaultdict
 from functools import reduce
 from operator import add
 
 from django.contrib.postgres.search import TrigramSimilarity, TrigramWordSimilarity
+from django.db import connection
 from django.db.models import Case, CharField, Func, IntegerField, Q, Value, When
 
 from .catalog import normalize_number
@@ -25,22 +26,57 @@ class SearchText(Func):
     output_field = CharField()
 
 
-def normalize(text):
-    """Python twin of ledger_search_text: lower case, no accents or apostrophes, other punctuation as one space."""
-    text = unicodedata.normalize("NFKD", text.lower().replace("æ", "ae"))
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    text = re.sub(r"['’]", "", text)
-    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+def normalize_all(texts):
+    """The texts as ledger_search_text sees them (lower case, no accents or apostrophes, other punctuation as one
+    space), computed by the same SQL function so query and names never disagree."""
+    if not texts:
+        return []
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT ledger_search_text(t) FROM unnest(%s::text[]) WITH ORDINALITY AS u(t, i) ORDER BY i",
+                       [list(texts)])
+        return [row[0] for row in cursor.fetchall()]
 
 
-def _word_condition(word, codes):
-    """A query word matches the start of a word of the name, an existing set code or, when the query names a set,
-    a collector number. Words hold only [a-z0-9], so they are safe inside a regex."""
-    cond = Q(st__regex=rf"(^| ){word}")
-    if word in codes:
-        cond |= Q(expansion__code=word)
-    if codes and _NUMBER.fullmatch(word):
-        cond |= Q(collector_number=normalize_number(word))
+class _Query:
+    """q split into terms: a raw token that is a set code (even "sld-cvd") is one term, every other token gives one
+    term per normalised word. Each term is (ids of the set it names or None, words)."""
+
+    def __init__(self, q):
+        tokens = q.lower().split()
+        normalized = normalize_all(tokens)
+        candidates = set(tokens) | {w for n in normalized for w in n.split()}
+        self.code_ids = defaultdict(list)
+        for code, pk in Expansion.objects.filter(code__in=candidates).values_list("code", "id"):
+            self.code_ids[code].append(pk)
+        self.terms = []
+        for token, norm in zip(tokens, normalized):
+            if token in self.code_ids:
+                self.terms.append((self.code_ids[token], norm.split()))
+            else:
+                self.terms += [(self.code_ids.get(w), [w]) for w in norm.split()]
+        self.words = [w for _, words in self.terms for w in words]
+        self.set_ids = [pk for ids in self.code_ids.values() for pk in ids]
+
+    def number(self, words):
+        """The collector number a term stands for: a lone numeric word, when q also names a set."""
+        if self.set_ids and len(words) == 1 and _NUMBER.fullmatch(words[0]):
+            return normalize_number(words[0])
+        return None
+
+
+def _starts_word(word):
+    # words hold only [a-z0-9], so they are safe inside a regex
+    return Q(st__regex=rf"(^| ){word}")
+
+
+def _term_condition(query, ids, words):
+    """A term matches the start of words of the name, its set or, when q names a set, a collector number there."""
+    cond = reduce(lambda a, b: a & b, (_starts_word(w) for w in words)) if words else Q(pk__in=[])
+    if ids:
+        cond |= Q(expansion_id__in=ids)
+    number = query.number(words)
+    if number:
+        cond |= Q(collector_number=number, expansion_id__in=query.set_ids)
     return cond
 
 
@@ -54,28 +90,39 @@ def _tie_breaks():
 
 
 def search_blueprints(queryset, q):
-    """The blueprints of the queryset matching every word of q, most relevant first; when none does, the ones whose
+    """The blueprints of the queryset matching every term of q, most relevant first; when none does, the ones whose
     name is close to q (typos), most similar first."""
-    words = normalize(q).split()
-    phrase = " ".join(words)
-    codes = set(Expansion.objects.filter(code__in=words).values_list("code", flat=True))
+    query = _Query(q)
+    phrase = " ".join(query.words)
     rank = Case(
         When(st=phrase, then=Value(0)), When(st__startswith=phrase, then=Value(1)),
         default=Value(2), output_field=IntegerField(),
     )
     matches = (queryset.alias(st=SearchText("name"))
-               .filter(*(_word_condition(w, codes) for w in words))
+               .filter(*(_term_condition(query, ids, words) for ids, words in query.terms))
                .order_by(rank, *_tie_breaks()))
-    if not words or matches.exists():
+    if not query.terms or matches.exists():
         return matches
-    return _fuzzy(queryset, words, phrase)
+    return _fuzzy(queryset, query)
 
 
-def _fuzzy(queryset, words, phrase):
-    """Every word close to a word of the name; the closest words first, then the name closest to the whole query
-    (so "Lightning Bolt" before "Art Series: Lightning Bolt")."""
+def _fuzzy(queryset, query):
+    """Set codes and collector numbers as filters, every other word close to a word of the name; the closest words
+    first, then the name closest to those words (so "Lightning Bolt" before "Art Series: Lightning Bolt")."""
+    words = []
+    for ids, term_words in query.terms:
+        number = query.number(term_words)
+        if ids:
+            queryset = queryset.filter(expansion_id__in=ids)
+        elif number:
+            queryset = queryset.filter(collector_number=number)
+        else:
+            words += term_words
+    if not words:
+        return queryset.none()
     sims = {f"sim{i}": TrigramWordSimilarity(Value(w), SearchText("name")) for i, w in enumerate(words)}
     return (queryset.alias(**sims)
             .filter(**{f"{k}__gte": FUZZY_THRESHOLD for k in sims})
-            .alias(total=reduce(add, sims.values()), whole=TrigramSimilarity(Value(phrase), SearchText("name")))
+            .alias(total=reduce(add, sims.values()),
+                   whole=TrigramSimilarity(Value(" ".join(words)), SearchText("name")))
             .order_by("-total", "-whole", *_tie_breaks()))

@@ -315,3 +315,21 @@ class SmartSearchTest(LedgerTestCase):
 
     def test_nonsense_finds_nothing(self):
         self.assertEqual(self.names(q="zzzxqv"), [])
+
+    def test_hyphenated_set_code(self):
+        sld = Expansion.objects.create(ct_id=502, code="sld-cvd", name="Secret Lair: CVD")
+        Blueprint.objects.create(ct_id=9201, expansion=sld, name="Cool Card", collector_number="1")
+        self.assertEqual(self.names(q="sld-cvd"), ["Cool Card"])
+        self.assertEqual(self.names(q="SLD-CVD cool"), ["Cool Card"])
+
+    def test_exact_name_with_transliterated_letters(self):
+        Blueprint.objects.create(ct_id=9202, expansion=Expansion.objects.get(code="dmr"), name="Sœur Weiß")
+        self.assertEqual(self.names(q="Sœur Weiß"), ["Sœur Weiß"])
+
+    def test_typo_with_set_code(self):
+        self.assertEqual(self.names(q="mothr rnes m21"), ["Mother of Runes"])
+
+    def test_number_belongs_to_the_named_set(self):
+        Blueprint.objects.create(ct_id=9203, expansion=Expansion.objects.get(code="m21"), name="Dmr Golem",
+                                 collector_number="1")
+        self.assertNotIn("Dmr Golem", self.names(q="dmr 1"))
