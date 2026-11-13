@@ -207,6 +207,21 @@ class CardTraderTokenTest(TestCase):
         self.assertEqual(services.get_cardtrader(self.user).api_token, "good-token")
         self.assertFalse(self.account()["cardtrader"]["token_saved"])
 
+    def test_get_returns_own_token_only(self, _):
+        self.connect("good-token")
+        self.connect("other-good", user=self.friend)
+        self.assertEqual(self.client.get(self.url).json(), {"token": "other-good"})
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get(self.url).json(), {"token": "good-token"})
+
+    def test_get_without_token_is_404(self, _):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_get_requires_login(self, _):
+        self.client.logout()
+        self.assertIn(self.client.get(self.url).status_code, (401, 403))
+
     def test_admin_sees_shared_token_warning(self, _):
         admin = get_user_model().objects.create_superuser("boss", password="pw")
         self.connect("good-token", user=admin)

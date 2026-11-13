@@ -8,6 +8,7 @@ from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -114,11 +115,16 @@ def password(request):
     return messages_response(msg("success", "Password changed."))
 
 
-@doc(TAGS, "Connect (PUT) or disconnect (DELETE) CardTrader with an API token",
+@doc(TAGS, "Show (GET), connect (PUT) or disconnect (DELETE) CardTrader with the user's own API token",
      request=form_body("CardTraderToken", CardTraderTokenForm))
-@api_view(["PUT", "DELETE"])
+@api_view(["GET", "PUT", "DELETE"])
 def cardtrader_token(request):
     user = request.user
+    if request.method == "GET":
+        token = ledger_services.user_token(user)
+        if not token:
+            raise NotFound("No CardTrader token is saved.")
+        return Response({"token": token})
     if request.method == "DELETE":
         ledger_services.remove_api_token(user)
         return messages_response(msg("success", "CardTrader token removed."))
