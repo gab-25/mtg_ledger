@@ -28,9 +28,10 @@ def _blueprint_value(field):
     return Subquery(Blueprint.objects.filter(ct_id=OuterRef("card__ct_blueprint_id")).values(field)[:1])
 
 
-def _with_category(items):
+def _with_blueprint(items):
     return items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
-                          category_name=_blueprint_value("category__name"))
+                          category_name=_blueprint_value("category__name"),
+                          image_url=_blueprint_value("image_url"))
 
 
 def _category(value):
@@ -63,6 +64,7 @@ def _row(item):
         "is_product": card.is_product,
         "category_id": item.category_ct_id,
         "category_name": item.category_name,
+        "image_url": item.image_url or "",
         "foil": item.foil,
         "condition": item.condition,
         "condition_label": item.get_condition_display(),
@@ -75,7 +77,7 @@ def _row(item):
 
 def _collection(request):
     user = request.user
-    items = _with_category(CollectionItem.objects.owned_by(user).select_related("card", "listing"))
+    items = _with_blueprint(CollectionItem.objects.owned_by(user).select_related("card", "listing"))
     stats = items.aggregate(total=Sum("quantity"), value=Sum(VALUE))
     stats["unique"] = Card.objects.filter(items__owner=user).distinct().count()
     stats["for_sale"] = (
@@ -143,7 +145,7 @@ def collection(request):
 @extend_schema(methods=["GET"], operation_id="collection_item_retrieve")
 @api_view(["GET", "PUT", "DELETE"])
 def item(request, pk):
-    obj = get_object_or_404(_with_category(CollectionItem.objects.owned_by(request.user).select_related("card")), pk=pk)
+    obj = get_object_or_404(_with_blueprint(CollectionItem.objects.owned_by(request.user).select_related("card")), pk=pk)
     if request.method == "DELETE":
         name = obj.card.name
         obj.delete()
