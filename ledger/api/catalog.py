@@ -1,13 +1,14 @@
 """The catalog API (/api/catalog/): search every CardTrader product (cards, sealed, accessories) with Cardmarket
 prices and owned copies."""
 
-from django.db.models import Max, Q
+from django.db.models import Max
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from .. import cardmarket
 from ..catalog import normalize_number
 from ..models import Blueprint, CardmarketPrice, Category
+from ..search import search_blueprints
 from .common import PAGE, doc, page_payload, query
 
 TAGS = ["catalog"]
@@ -25,9 +26,11 @@ def _category(value):
         return None
 
 
-@doc(TAGS, "Search the catalog by ?q (name or set code), set, number, category, owned=1; page. With no filter "
-           "(searched: false) it lists the latest releases: the products of the newest expansions first", parameters=[
-    query("q", "Name, or exact set code"),
+@doc(TAGS, "Search the catalog by ?q, set, number, category, owned=1; page. q matches its words, in any order, "
+           "against the start of the words of the name (case, accents and punctuation ignored), set codes and, when "
+           "it names a set, collector numbers; results come most relevant first. With no filter (searched: false) "
+           "it lists the latest releases: the products of the newest expansions first", parameters=[
+    query("q", "Words of the name in any order, set codes and, with a set code, collector numbers"),
     query("set", "Exact set code"),
     query("number", "Collector number"),
     query("category", "CardTrader category id (see /api/catalog/categories/)"),
@@ -53,8 +56,6 @@ def catalog(request):
         # Latest releases: Expansion has no release date, and CardTrader ids grow over time (not strictly by
         # release), so the newest expansion is the one with the highest CardTrader id.
         printings = printings.order_by("-expansion__ct_id", "name", "expansion__code", "ct_id")
-    if q:
-        printings = printings.filter(Q(name__icontains=q) | Q(expansion__code__iexact=q))
     if set_code:
         printings = printings.filter(expansion__code=set_code)
     if number:
@@ -63,6 +64,8 @@ def catalog(request):
         printings = printings.filter(category__ct_id=category)
     if owned:
         printings = printings.filter(ct_id__in=owned_qty)
+    if q:
+        printings = search_blueprints(printings, q)  # orders by relevance
 
     def printing(bp):
         price = bp.cm_price

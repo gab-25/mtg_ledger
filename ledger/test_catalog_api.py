@@ -239,3 +239,57 @@ class CatalogApiTest(LedgerTestCase):
         )
         data = self.search(set="tm21", page="2")
         self.assertEqual((data["count"], data["page"], data["num_pages"], len(data["results"])), (60, 2, 2, 10))
+
+
+class SmartSearchTest(LedgerTestCase):
+    def setUp(self):
+        super().setUp()
+        catalog()
+        self.url = reverse("ledger:api_catalog")
+        m21, dmr = Expansion.objects.get(code="m21"), Expansion.objects.get(code="dmr")
+        single, boxes = Category.objects.get(ct_id=1), Category.objects.get(ct_id=4)
+        for ct_id, exp, name, number, category in [
+            (9101, m21, "Mother of Runes", "10", single),
+            (9102, dmr, "Queen Mother Ramonda", "20", single),
+            (9103, dmr, "Lim-Dûl the Necromancer", "30", single),
+            (9104, dmr, "Urza's Saga", "123", single),
+            (9105, dmr, "Mother of Runes Playmat", "", boxes),
+            (9106, dmr, "Mother of Prunes", "40", single),
+        ]:
+            Blueprint.objects.create(ct_id=ct_id, expansion=exp, name=name, collector_number=number,
+                                     category=category)
+
+    def search(self, **params):
+        resp = self.client.get(self.url, params)
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def names(self, **params):
+        return [p["name"] for p in self.search(**params)["results"]]
+
+    def test_words_in_any_order_and_prefix(self):
+        self.assertEqual(self.names(q="mother rune"), ["Mother of Runes", "Mother of Runes Playmat"])
+        self.assertEqual(self.names(q="rune mother"), ["Mother of Runes", "Mother of Runes Playmat"])
+
+    def test_word_must_start_a_word(self):
+        self.assertNotIn("Mother of Prunes", self.names(q="mother rune"))
+
+    def test_case_accents_and_punctuation(self):
+        self.assertEqual(self.names(q="LIM DUL"), ["Lim-Dûl the Necromancer"])
+        self.assertEqual(self.names(q="lim-dûl"), ["Lim-Dûl the Necromancer"])
+        self.assertEqual(self.names(q="urzas"), ["Urza's Saga"])
+        self.assertEqual(self.names(q="Urza's Saga"), ["Urza's Saga"])
+
+    def test_set_code_in_query(self):
+        self.assertEqual(self.names(q="mother m21"), ["Mother of Runes"])
+        self.assertEqual(self.names(q="M21"), ["Basri Ket", "Mother of Runes", "Ugin, the Spirit Dragon"])
+
+    def test_number_needs_a_set_code(self):
+        self.assertEqual(self.names(q="dmr 123"), ["Urza's Saga"])
+        self.assertEqual(self.names(q="123"), [])
+
+    def test_regex_characters_are_harmless(self):
+        self.search(q="bolt.*(")
+
+    def test_blank_words_do_not_filter(self):
+        self.assertEqual(self.search(q=" -' ")["count"], Blueprint.objects.count())
