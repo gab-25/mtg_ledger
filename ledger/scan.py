@@ -213,10 +213,10 @@ def save_session(session):
             card = _card_for(line)
             item, created = CollectionItem.objects.get_or_create(
                 owner=session.owner, card=card, condition=line.condition, language=line.language, foil=line.foil,
-                defaults={"quantity": line.quantity, "price": line.price or 0},
+                defaults={"quantity": line.quantity},
             )
             if not created:
-                item.quantity += line.quantity  # the existing unit price is kept
+                item.quantity += line.quantity
                 item.save(update_fields=["quantity", "updated_at"])
             saved += line.quantity
             if line.listed:

@@ -207,11 +207,11 @@ def load_demo(owner):
     service.save()
 
     items = {}
-    for name, set_code, cond, lang, qty, price, listing in CARDS:
+    for name, set_code, cond, lang, qty, _price, listing in CARDS:
         card, _ = Card.objects.get_or_create(name=name, set_code=set_code)
         item, _ = CollectionItem.objects.get_or_create(
             owner=owner, card=card, condition=cond, language=lang, foil=False,
-            defaults={"quantity": qty, "price": Decimal(price)},
+            defaults={"quantity": qty},
         )
         items[name] = item
         if listing:
@@ -313,7 +313,7 @@ class PagesTest(LedgerTestCase):
     def test_pagination_payload(self):
         card = Card.objects.create(name="Island", set_code="ZZZ")
         CollectionItem.objects.bulk_create(
-            [CollectionItem(owner=self.user, card=card, condition="NM", language="EN", quantity=1, price=i)
+            [CollectionItem(owner=self.user, card=card, condition="NM", language="EN", quantity=1)
              for i in range(60)]
         )
         data = self.collection(set="ZZZ")
@@ -382,7 +382,7 @@ class ItemTest(LedgerTestCase):
     def test_add_with_existing_duplicate_stacks_merges_into_the_oldest(self):
         first = CollectionItem.objects.get(pk=add(self, 1390, quantity=1).json()["id"])
         twin = CollectionItem.objects.create(owner=self.user, card=first.card, condition="NM", language="EN",
-                                             quantity=4, price=Decimal("1.00"))  # made by the old free-text form
+                                             quantity=4)  # made by the old free-text form
         resp = add(self, 1390, quantity=2)
         self.assertEqual((resp.status_code, resp.json()["id"]), (200, first.pk))
         first.refresh_from_db()
@@ -443,8 +443,7 @@ class ItemTest(LedgerTestCase):
         Blueprint.objects.filter(ct_id=1390).update(image_url="https://img/1390.jpg")
         add(self, 1390)
         Card.objects.create(name="Loose Card", set_code="ZZZ")  # no blueprint
-        CollectionItem.objects.create(owner=self.user, card=Card.objects.get(name="Loose Card"), quantity=1,
-                                      price=Decimal("1.00"))
+        CollectionItem.objects.create(owner=self.user, card=Card.objects.get(name="Loose Card"), quantity=1)
         rows = {r["name"]: r for r in self.client.get(reverse("ledger:api_collection")).json()["results"]}
         self.assertEqual(rows["Dominaria United Draft Booster Box"]["image_url"], "https://img/1390.jpg")
         self.assertEqual(rows["Loose Card"]["image_url"], "")
@@ -518,6 +517,9 @@ class TrendPriceTest(LedgerTestCase):
     def test_value_without_any_trend_is_null(self):
         add(self, 1301)
         self.assertIsNone(self.collection()["stats"]["value"])
+
+    def test_collection_item_stores_no_price(self):
+        self.assertNotIn("price", [f.name for f in CollectionItem._meta.get_fields()])
 
     def test_add_ignores_price_in_body(self):
         resp = add(self, 1301, price="abc")
@@ -1059,7 +1061,7 @@ class SellingIsolationTest(LedgerTestCase):
 
     def friend_listing(self, status=Listing.Status.TO_PUBLISH, ct_product_id=None, name="Lightning Bolt"):
         card = Card.objects.create(name=name, set_code="M10", ct_blueprint_id=1001 if name == "Lightning Bolt" else None)
-        item = CollectionItem.objects.create(owner=self.other, card=card, quantity=2, price=Decimal("1.00"))
+        item = CollectionItem.objects.create(owner=self.other, card=card, quantity=2)
         return Listing.objects.create(item=item, quantity=1, price=Decimal("1.00"), status=status,
                                       ct_product_id=ct_product_id)
 

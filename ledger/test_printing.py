@@ -82,13 +82,11 @@ class ResolvePrintingTest(LedgerTestCase):
         legacy = Card.objects.get(name="Counterspell", set_code="DMR")  # demo: NM/IT x4 @0.80, listed
         printing = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45",
                                        ct_blueprint_id=1201)
-        CollectionItem.objects.create(owner=self.user, card=printing, condition="NM", language="IT", quantity=2,
-                                      price=Decimal("1.00"))
+        CollectionItem.objects.create(owner=self.user, card=printing, condition="NM", language="IT", quantity=2)
         self.assertEqual(self.resolve([legacy]), [])
         self.assertFalse(Card.objects.filter(pk=legacy.pk).exists())
         item = CollectionItem.objects.get(card=printing, condition="NM", language="IT", foil=False)
         self.assertEqual(item.quantity, 6)
-        self.assertEqual(item.price, Decimal("1.00"))
         self.assertTrue(Listing.objects.filter(item=item).exists())  # the legacy listing follows the copies
 
     def test_merge_refuses_two_live_listings(self):

@@ -12,7 +12,7 @@ class CardAdmin(admin.ModelAdmin):
 
 @admin.register(CollectionItem)
 class CollectionItemAdmin(admin.ModelAdmin):
-    list_display = ["card", "owner", "condition", "language", "foil", "quantity", "price"]
+    list_display = ["card", "owner", "condition", "language", "foil", "quantity"]
     list_filter = ["owner", "condition", "language", "foil"]
     search_fields = ["card__name"]
     autocomplete_fields = ["card"]

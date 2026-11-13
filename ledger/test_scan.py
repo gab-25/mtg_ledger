@@ -102,10 +102,9 @@ class SaveTest(ScanTestCase):
         self.session.sale_threshold = Decimal("3.00")
         self.session.save()
 
-    def printing(self, *, quantity=1, price="9.00", listing_status=None):
+    def printing(self, *, quantity=1, listing_status=None):
         card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=1201)
-        item = CollectionItem.objects.create(owner=self.user, card=card, condition="NM", language="IT", quantity=quantity,
-                                             price=Decimal(price))
+        item = CollectionItem.objects.create(owner=self.user, card=card, condition="NM", language="IT", quantity=quantity)
         if listing_status:
             Listing.objects.create(item=item, quantity=1, price=Decimal("9.00"), status=listing_status)
         return item
@@ -115,7 +114,7 @@ class SaveTest(ScanTestCase):
         self.capture("a")
         self.assertEqual(scan.save_session(self.session), (1, 1))
         item = CollectionItem.objects.get(card__ct_blueprint_id=1201)
-        self.assertEqual((item.card.collector_number, item.price, item.quantity), ("45", Decimal("5.00"), 1))
+        self.assertEqual((item.card.collector_number, item.quantity), ("45", 1))
         self.assertEqual((item.listing.status, item.listing.price), (Listing.Status.TO_PUBLISH, Decimal("5.00")))
 
     def test_save_adds_to_own_item_for_same_printing(self):
@@ -130,13 +129,13 @@ class SaveTest(ScanTestCase):
         self.assertEqual(mine.quantity, 2)
         self.assertTrue(SyncLog.objects.filter(owner=self.other, message__startswith="Camera scan").exists())
 
-    def test_save_keeps_existing_price(self):
+    def test_save_adds_to_existing_copies(self):
         item = self.printing()
         self.capture("a")
         self.capture("b")
         scan.save_session(self.session)
         item.refresh_from_db()
-        self.assertEqual((item.quantity, item.price), (3, Decimal("9.00")))
+        self.assertEqual(item.quantity, 3)
 
     def test_save_upgrades_legacy_card_for_base_printing(self):
         legacy = Card.objects.get(name="Counterspell", set_code="DMR")  # demo: NM/IT x4 @0.80
@@ -178,7 +177,6 @@ class SaveTest(ScanTestCase):
         scan.update_line(line, for_sale=True)
         self.assertEqual(scan.save_session(self.session), (1, 0))
         item = CollectionItem.objects.get(card__ct_blueprint_id=1201)
-        self.assertEqual(item.price, Decimal("0.00"))
         self.assertFalse(Listing.objects.filter(item=item).exists())
 
     def test_save_blocked_by_unconfirmed(self):

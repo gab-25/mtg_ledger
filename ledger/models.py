@@ -1,5 +1,4 @@
 import uuid
-from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -101,9 +100,6 @@ class CollectionItem(models.Model):
     language = models.CharField(max_length=3, choices=Language.choices, default=Language.EN)
     foil = models.BooleanField(default=False)
     quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(
-        "Unit price", max_digits=10, decimal_places=2, default=Decimal("0.00")
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -114,10 +110,6 @@ class CollectionItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity}× {self.card} {self.condition} {self.language}"
-
-    @property
-    def total_value(self):
-        return self.price * self.quantity
 
     @property
     def status(self):
