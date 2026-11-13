@@ -86,6 +86,11 @@ class SuggestedPriceTest(CardmarketTestCase):
         card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=1201)
         self.assertIsNone(cardmarket.suggested_price(card, foil=True))
 
+    def test_zero_trend_is_no_price(self):
+        CardmarketPrice.objects.filter(pk=555201).update(trend_foil=Decimal("0.00"))
+        card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45", ct_blueprint_id=1201)
+        self.assertIsNone(cardmarket.suggested_price(card, foil=True))
+
     def test_card_without_blueprint_found_by_set_and_number(self):
         card = Card.objects.create(name="Counterspell", set_code="DMR", collector_number="045")
         self.assertEqual(cardmarket.suggested_price(card, foil=False), Decimal("1.20"))

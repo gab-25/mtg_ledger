@@ -123,6 +123,8 @@ printing. It uses the administrator's CardTrader token (Profile and settings).
 
 - **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
   how many copies you own and the Cardmarket prices.
+- **Collection**: the price of each copy is the Cardmarket trend of its printing (foil trend for foil copies),
+  computed on every page load, never typed; the estimated value is trend × quantity. Copies without a trend show "–".
 - **Listing form**: the Cardmarket trend (foil trend for foil copies) is shown and prefills the price of a new
   listing.
 
@@ -146,7 +148,7 @@ condition, then frame one card at a time. **Auto-shoot** takes the photo by itse
 and in focus, and re-arms only once the box is empty again (the shutter button still works). The photo is
 recognised by a vision model on OpenRouter, matched against the local CardTrader catalog and added to a draft.
 Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged), lets you set a
-"list for sale above €X" threshold and saves everything at once (new copies get the CardTrader market price; listings
+"list for sale above €X" threshold and saves everything at once (listed copies get the CardTrader market price; listings
 are created as *To publish*).
 
 - The scan screens are part of the React UI ([mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui)), under
@@ -203,4 +205,4 @@ If the QR page says the address is not HTTPS, the proxy did not send `X-Forwarde
 
 ## CSV
 
-Columns: `name,set,condition,language,foil,quantity,price,number` (`number` = collector number, optional: it identifies the exact printing). Old files with `type` and `color` columns still import: those columns are ignored.
+Columns: `name,set,condition,language,foil,quantity,number` (`number` = collector number, optional: it identifies the exact printing and ties the card to the catalog). Old files with `type`, `color` or `price` columns still import: those columns are ignored.

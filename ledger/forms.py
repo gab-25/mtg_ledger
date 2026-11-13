@@ -28,7 +28,6 @@ class CatalogItemForm(forms.Form):
     language = forms.ChoiceField(choices=Language.choices, initial=Language.EN, required=False)
     foil = forms.BooleanField(required=False)
     quantity = forms.IntegerField(min_value=1, initial=1)
-    price = forms.DecimalField(label="Unit price", max_digits=10, decimal_places=2, min_value=0)
 
     def __init__(self, *args, owner, **kwargs):
         super().__init__(*args, **kwargs)
@@ -41,7 +40,7 @@ class CatalogItemForm(forms.Form):
         return bp
 
     def save(self):
-        """(item, merged): an identical stack of the owner's gets the copies, keeping its price."""
+        """(item, merged): an identical stack of the owner's gets the copies."""
         data = self.cleaned_data
         bp = data["blueprint"]
         condition, language, foil = data["condition"] or Condition.NEAR_MINT, data["language"] or Language.EN, data["foil"]
@@ -54,7 +53,7 @@ class CatalogItemForm(forms.Form):
         # Older rows may hold duplicate stacks (the free-text form never merged): the oldest gets the copies.
         item = CollectionItem.objects.filter(**stack).order_by("pk").first()
         if item is None:
-            return CollectionItem.objects.create(**stack, quantity=data["quantity"], price=data["price"]), False
+            return CollectionItem.objects.create(**stack, quantity=data["quantity"]), False
         CollectionItem.objects.filter(pk=item.pk).update(quantity=F("quantity") + data["quantity"], updated_at=Now())
         item.refresh_from_db()
         return item, True
@@ -65,7 +64,7 @@ class ItemForm(forms.ModelForm):
 
     class Meta:
         model = CollectionItem
-        fields = ["condition", "language", "foil", "quantity", "price"]
+        fields = ["condition", "language", "foil", "quantity"]
 
     def save(self, commit=True):
         if self.instance.card.is_product:

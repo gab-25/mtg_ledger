@@ -56,7 +56,8 @@ def suggested_price(card, foil):
     price = CardmarketPrice.objects.filter(pk=bp.cm_price_id).first()
     if price is None:
         return None
-    return price.trend_foil if foil and not card.is_product else price.trend
+    trend = price.trend_foil if foil and not card.is_product else price.trend
+    return trend or None  # the guide holds 0.00 for a finish that doesn't exist
 
 
 def owned_quantities(owner):

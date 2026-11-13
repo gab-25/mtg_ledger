@@ -4,7 +4,7 @@ import csv
 import io
 from dataclasses import dataclass, field
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
@@ -38,7 +38,7 @@ from .models import (
     SyncService,
 )
 
-CSV_FIELDS = ["name", "set", "condition", "language", "foil", "quantity", "price", "number"]
+CSV_FIELDS = ["name", "set", "condition", "language", "foil", "quantity", "number"]
 CARDTRADER = "CardTrader"
 
 
@@ -172,7 +172,6 @@ def export_csv(items, stream):
             item.language,
             "1" if item.foil else "0",
             item.quantity,
-            f"{item.price:.2f}",
             item.card.collector_number,
         ])
 
@@ -188,6 +187,18 @@ def _choice(value, choices, default, field_name, line):
     if value not in choices.values:
         raise CsvImportError(f"Line {line}: invalid {field_name} '{value}'")
     return value
+
+
+def link_blueprint(card):
+    """Tie a card to its catalog printing by set + collector number, when it has none and one matches."""
+    if card.ct_blueprint_id or not card.collector_number:
+        return
+    bp = Blueprint.objects.filter(
+        expansion__code=card.set_code.lower(), collector_number=normalize_number(card.collector_number)
+    ).order_by("version", "ct_id").first()  # the base printing ("" version) before alternate ones
+    if bp is not None and not Card.objects.filter(ct_blueprint_id=bp.ct_id).exists():
+        card.ct_blueprint_id = bp.ct_id
+        card.save(update_fields=["ct_blueprint_id"])
 
 
 def import_csv(uploaded_file, owner):
@@ -211,31 +222,30 @@ def import_csv(uploaded_file, owner):
                 continue
             try:
                 quantity = int(row.get("quantity") or 1)
-                price = Decimal(row.get("price") or "0").quantize(Decimal("0.01"))
-            except (ValueError, InvalidOperation) as exc:
-                raise CsvImportError(f"Line {line}: invalid quantity or price") from exc
-            if quantity < 0 or price < 0:
-                raise CsvImportError(f"Line {line}: quantity and price must be positive")
+            except ValueError as exc:
+                raise CsvImportError(f"Line {line}: invalid quantity") from exc
+            if quantity < 0:
+                raise CsvImportError(f"Line {line}: quantity must be positive")
 
             card = get_or_create_card(
                 row["name"],
                 row["set"].upper(),
                 normalize_number(row.get("number", "")),
             )
+            link_blueprint(card)
             item, item_created = CollectionItem.objects.get_or_create(
                 owner=owner,
                 card=card,
                 condition=_choice(row.get("condition"), Condition, Condition.NEAR_MINT, "condition", line),
                 language=_choice(row.get("language"), Language, Language.EN, "language", line),
                 foil=row.get("foil", "").lower() in {"1", "true", "yes", "y", "foil"},
-                defaults={"quantity": quantity, "price": price},
+                defaults={"quantity": quantity},
             )
             if item_created:
                 created += 1
             else:
                 item.quantity = quantity
-                item.price = price
-                item.save(update_fields=["quantity", "price", "updated_at"])
+                item.save(update_fields=["quantity", "updated_at"])
                 updated += 1
 
         _log(f"CSV import: {created} new cards, {updated} quantities updated", owner=owner)
