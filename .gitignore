@@ -222,6 +222,3 @@ staticfiles/
 
 # Superpowers design specs and plans (local only)
 docs/superpowers/
-
-# Built React UI (Docker unpacks a release here; in development point UI_APP_DIR at a build)
-ui_app/
