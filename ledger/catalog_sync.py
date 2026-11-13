@@ -8,6 +8,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import batched
 
 from . import cardmarket, services
 from .cardmarket import PRICE_FIELDS, CardmarketError
@@ -49,21 +50,43 @@ def _export(client, expansion_id):
         return client.blueprints(expansion_id) or []
 
 
+class _RawCategory(dict):
+    """A categories mapping for _blueprint_fields() that keeps CardTrader's own category id."""
+
+    def get(self, key, default=None):
+        return key
+
+
+def _compact(blueprints):
+    """{blueprint ct_id: Blueprint fields} of an export; category_id is still CardTrader's category id.
+
+    Only these fields are kept: the whole export of every expansion, as parsed JSON, does not fit in the worker.
+    """
+    try:
+        return {bp["id"]: _blueprint_fields(bp, _RawCategory()) for bp in blueprints}
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise CatalogSyncError(f"CardTrader blueprints: {type(exc).__name__}: {exc}") from exc
+
+
 def _fetch_catalog(client):
-    """(MTG expansions, {expansion ct_id: [blueprint]}, codes of expansions that could not be loaded)."""
+    """(MTG expansions, {blueprint ct_id: (expansion ct_id, fields)}, ct_ids of the expansions loaded,
+    codes of expansions that could not be loaded)."""
     try:
         expansions = [e for e in client.expansions() if e.get("game_id") == MTG_GAME_ID and e.get("code")]
     except CardTraderError as exc:
         raise CatalogSyncError(f"CardTrader expansions: {exc}") from exc
-    blueprints, failed = {}, []
+    blueprints, loaded, failed = {}, [], []
     for e in expansions:
         try:
-            blueprints[e["id"]] = _export(client, e["id"])
+            exported = _export(client, e["id"])
         except CardTraderError as exc:
             logger.warning("Blueprints of %s not loaded: %s", e["code"], exc)
             failed.append(e["code"].lower())
+        else:
+            blueprints.update((ct_id, (e["id"], fields)) for ct_id, fields in _compact(exported).items())
+            loaded.append(e["id"])
         time.sleep(BLUEPRINT_PAUSE)
-    return expansions, blueprints, sorted(failed)
+    return expansions, blueprints, loaded, sorted(failed)
 
 
 # --- write -------------------------------------------------------------------
@@ -91,7 +114,7 @@ def sync(cm_client, ct_client):
     from django.utils import timezone
 
     prices, guide_date = cardmarket.fetch_guide(cm_client)
-    expansions, exports, failed = _fetch_catalog(ct_client)
+    expansions, blueprints, loaded, failed = _fetch_catalog(ct_client)
     try:
         categories = ct_client.categories() or []
     except CardTraderError as exc:
@@ -108,32 +131,37 @@ def sync(cm_client, ct_client):
                 update_conflicts=True, unique_fields=["ct_id"], update_fields=["name"],
             )
             pk_by_ct = dict(Expansion.objects.values_list("ct_id", "pk"))
-            category_by_ct = category_pks(bp.get("category_id") for bps in exports.values() for bp in bps)
-            objs = {}
-            for exp_ct_id, bps in exports.items():
-                for bp in bps:
-                    objs[bp["id"]] = Blueprint(
-                        ct_id=bp["id"], expansion_id=pk_by_ct[exp_ct_id], **_blueprint_fields(bp, category_by_ct),
-                    )
-            Blueprint.objects.bulk_create(
-                objs.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["ct_id"],
-                update_fields=[
-                    "expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price",
-                    "category", "editable_properties",
-                ],
-            )
-            refresh_product_flags(objs.keys())
-            Expansion.objects.filter(ct_id__in=exports.keys()).update(blueprints_synced_at=now)
-            CardmarketPrice.objects.bulk_create(
-                prices.values(), batch_size=BATCH, update_conflicts=True, unique_fields=["id_product"],
-                update_fields=[*PRICE_FIELDS.values(), "prices_date"],
-            )
-    except (KeyError, TypeError) as exc:  # unexpected blueprint shape, raised before the transaction commits
+            category_by_ct = category_pks(fields["category_id"] for _, fields in blueprints.values())
+            # Models are built and written one batch at a time: all of them at once do not fit in the worker.
+            for chunk in batched(blueprints.items(), BATCH):
+                Blueprint.objects.bulk_create(
+                    [
+                        Blueprint(
+                            ct_id=ct_id, expansion_id=pk_by_ct[exp_ct_id],
+                            **{**fields, "category_id": category_by_ct.get(fields["category_id"])},
+                        )
+                        for ct_id, (exp_ct_id, fields) in chunk
+                    ],
+                    update_conflicts=True, unique_fields=["ct_id"],
+                    update_fields=[
+                        "expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price",
+                        "category", "editable_properties",
+                    ],
+                )
+            refresh_product_flags(blueprints.keys())
+            Expansion.objects.filter(ct_id__in=loaded).update(blueprints_synced_at=now)
+            for chunk in batched(prices.items(), BATCH):
+                CardmarketPrice.objects.bulk_create(
+                    [cardmarket.price_row(id_product, values, guide_date) for id_product, values in chunk],
+                    update_conflicts=True, unique_fields=["id_product"],
+                    update_fields=[*PRICE_FIELDS.values(), "prices_date"],
+                )
+    except (KeyError, TypeError) as exc:  # unexpected CardTrader shape, raised before the transaction commits
         raise CatalogSyncError(f"CardTrader blueprints: {type(exc).__name__}: {exc}") from exc
     linked, unlinked = _count_links()
-    priced = sum(1 for o in objs.values() if o.cm_price_id in prices)
+    priced = sum(1 for _, fields in blueprints.values() if fields["cm_price_id"] in prices)
     return SyncResult(
-        expansions=len(expansions), blueprints=len(objs), priced=priced, linked=linked, unlinked=unlinked,
+        expansions=len(expansions), blueprints=len(blueprints), priced=priced, linked=linked, unlinked=unlinked,
         guide_date=guide_date, failed=failed,
     )
 

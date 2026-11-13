@@ -90,19 +90,26 @@ def _money(value):
 
 
 def fetch_guide(client):
-    """({idProduct: CardmarketPrice}, createdAt) from today's price guide."""
+    """({idProduct: raw values in PRICE_FIELDS order}, createdAt) from today's price guide.
+
+    The values stay as parsed from the JSON: the guide has over 100k rows, and models with a Decimal per field
+    would cost hundreds of MB on the worker. price_row() builds the model when it is written.
+    """
     try:
         response = client.get(PRICE_GUIDE_URL)
         response.raise_for_status()
         guide = response.json()
+        del response
         guide_date = datetime.strptime(guide["createdAt"], "%Y-%m-%dT%H:%M:%S%z")
-        prices = {
-            row["idProduct"]: CardmarketPrice(
-                id_product=row["idProduct"], prices_date=guide_date,
-                **{f: _money(row.get(key)) for key, f in PRICE_FIELDS.items()},
-            )
-            for row in guide["priceGuides"]
-        }
+        prices = {row["idProduct"]: tuple(row.get(key) for key in PRICE_FIELDS) for row in guide["priceGuides"]}
     except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise CardmarketError(f"Cardmarket price guide: {type(exc).__name__}: {exc}") from exc
     return prices, guide_date
+
+
+def price_row(id_product, values, guide_date):
+    """The CardmarketPrice of a fetch_guide() entry."""
+    return CardmarketPrice(
+        id_product=id_product, prices_date=guide_date,
+        **{f: _money(v) for f, v in zip(PRICE_FIELDS.values(), values)},
+    )
