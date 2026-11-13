@@ -70,6 +70,14 @@ class SyncTest(CardmarketTestCase):
         self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("50.00"))
         self.assertEqual(Blueprint.objects.get(ct_id=1001).name, "Ragavan (renamed)")
 
+    def test_sync_written_in_batches(self):
+        with mock.patch.object(catalog_sync, "BATCH", 3):
+            result = self.sync()
+        self.assertEqual((Blueprint.objects.count(), result.blueprints, result.priced), (10, 10, 2))
+        self.assertEqual(CardmarketPrice.objects.count(), 3)
+        self.assertEqual(Blueprint.objects.get(ct_id=1390).category.ct_id, 4)
+        self.assertEqual(CardmarketPrice.objects.get(pk=555201).trend, Decimal("1.20"))
+
     def test_duplicate_guide_rows_do_not_break_sync(self):
         self.guide.guide["priceGuides"].append(dict(self.guide.guide["priceGuides"][0]))
         self.sync()
