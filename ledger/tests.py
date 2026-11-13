@@ -546,9 +546,9 @@ class CsvTest(LedgerTestCase):
         resp = self.client.get(reverse("ledger:api_export"))
         self.assertTrue(resp["Content-Disposition"].startswith('attachment; filename="mtg-ledger-'))
         csv_bytes = resp.content
-        self.assertTrue(csv_bytes.startswith(b"name,set,condition,language,foil,quantity,price,number"))
+        self.assertTrue(csv_bytes.startswith(b"name,set,condition,language,foil,quantity,number\r\n"))
         before = CollectionItem.objects.count()
-        upload = SimpleUploadedFile("c.csv", csv_bytes + "Lightning Bolt,M10,NM,EN,0,4,1.50,\n".encode())
+        upload = SimpleUploadedFile("c.csv", csv_bytes + "Lightning Bolt,M10,NM,EN,0,4,\n".encode())
         resp = self.client.post(reverse("ledger:api_import"), {"file": upload})
         self.assertEqual(resp.status_code, 200)
         self.assertRegex(resp.json()["messages"][0]["text"], r"^Import complete: 1 new, \d+ updated\.$")
@@ -560,6 +560,33 @@ class CsvTest(LedgerTestCase):
         resp = self.client.post(reverse("ledger:api_import"), {"file": upload})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(CollectionItem.objects.get(card__name="Lightning Bolt").quantity, 4)
+
+    def test_import_ignores_price_column(self):
+        upload = SimpleUploadedFile("c.csv", b"name,set,quantity,price\nLightning Bolt,M10,4,abc\n")
+        resp = self.client.post(reverse("ledger:api_import"), {"file": upload})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(CollectionItem.objects.get(card__name="Lightning Bolt").quantity, 4)
+
+    def test_import_links_catalog_printing(self):
+        load_dmu(self)
+        upload = SimpleUploadedFile("c.csv", b"name,set,number\nSheoldred the Apocalypse,DMU,0107\n")
+        self.assertEqual(self.client.post(reverse("ledger:api_import"), {"file": upload}).status_code, 200)
+        self.assertEqual(Card.objects.get(set_code="DMU", collector_number="107").ct_blueprint_id, 1301)
+
+    def test_import_without_match_stays_unlinked(self):
+        load_dmu(self)
+        upload = SimpleUploadedFile("c.csv", b"name,set,number\nNobody,DMU,999\nLightning Bolt,M10,\n")
+        self.assertEqual(self.client.post(reverse("ledger:api_import"), {"file": upload}).status_code, 200)
+        self.assertIsNone(Card.objects.get(name="Nobody").ct_blueprint_id)
+        self.assertIsNone(Card.objects.get(name="Lightning Bolt").ct_blueprint_id)
+
+    def test_import_leaves_printing_held_by_another_card(self):
+        load_dmu(self)
+        Card.objects.create(name="Sheoldred, the Apocalypse", set_code="DMU", collector_number="CT1301",
+                            ct_blueprint_id=1301)
+        upload = SimpleUploadedFile("c.csv", b"name,set,number\nSheoldred the Apocalypse,DMU,107\n")
+        self.assertEqual(self.client.post(reverse("ledger:api_import"), {"file": upload}).status_code, 200)
+        self.assertIsNone(Card.objects.get(set_code="DMU", collector_number="107").ct_blueprint_id)
 
     def test_import_columns(self):
         self.assertEqual(self.client.get(reverse("ledger:api_import")).json()["columns"], list(services.CSV_FIELDS))

@@ -51,7 +51,7 @@ class PrintingFormCsvTest(LedgerTestCase):
         self.assertTrue(Card.objects.filter(name="Fable of the Mirror-Breaker", set_code="NEO",
                                             collector_number="141").exists())
         exported = self.client.get(reverse("ledger:api_export")).content.decode()
-        self.assertIn("price,number", exported.splitlines()[0])
+        self.assertIn("quantity,number", exported.splitlines()[0])
         self.assertIn(",141", exported)
 
     def test_normalize_number(self):
