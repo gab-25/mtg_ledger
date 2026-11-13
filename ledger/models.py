@@ -26,7 +26,7 @@ def owned_manager(path):
 
 class SyncLogQuerySet(models.QuerySet):
     def visible_to(self, user):
-        """The user's own entries plus the global ones (no owner, e.g. the Cardmarket sync)."""
+        """The user's own entries plus the global ones (no owner, e.g. the catalog sync)."""
         return self.filter(Q(owner=user) | Q(owner__isnull=True))
 
 
@@ -209,7 +209,7 @@ class SyncLog(models.Model):
         OK = "ok", "OK"
         WARNING = "warn", "Warning"
 
-    owner = models.ForeignKey(  # None: a global entry (the Cardmarket sync)
+    owner = models.ForeignKey(  # None: a global entry (the catalog sync)
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="sync_logs",
     )
     created_at = models.DateTimeField(auto_now_add=True)
