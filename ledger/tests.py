@@ -176,19 +176,19 @@ def order_payload(oid, state, items, *, ct0=False, tracked=False):
     }
 
 
-# name, set, cond, lang, qty, price, listing (status, price, market) or None
+# name, set, cond, lang, qty, price, listing (status, price) or None
 CARDS = [
-    ("Ragavan, Nimble Pilferer", "MH2", "NM", "EN", 1, "48.00", ("published", "48.00", "46.50")),
+    ("Ragavan, Nimble Pilferer", "MH2", "NM", "EN", 1, "48.00", ("published", "48.00")),
     ("The One Ring", "LTR", "NM", "EN", 1, "62.50", None),
-    ("Sheoldred, the Apocalypse", "DMU", "LP", "IT", 2, "71.80", ("to_publish", "71.80", "70.00")),
+    ("Sheoldred, the Apocalypse", "DMU", "LP", "IT", 2, "71.80", ("to_publish", "71.80")),
     ("Orcish Bowmasters", "LTR", "NM", "EN", 4, "23.50", None),
-    ("Fable of the Mirror-Breaker", "NEO", "NM", "JP", 2, "19.20", ("to_publish", "19.20", "18.90")),
+    ("Fable of the Mirror-Breaker", "NEO", "NM", "JP", 2, "19.20", ("to_publish", "19.20")),
     ("Wrenn and Six", "2XM", "EX", "EN", 1, "29.90", None),
-    ("Counterspell", "DMR", "NM", "IT", 4, "0.80", ("to_publish", "0.80", "0.70")),
+    ("Counterspell", "DMR", "NM", "IT", 4, "0.80", ("to_publish", "0.80")),
     ("Thoughtseize", "2XM", "NM", "EN", 3, "12.00", None),
-    ("Solitude", "MH2", "EX", "EN", 1, "21.00", ("published", "21.00", "22.40")),
-    ("Urza’s Saga", "MH2", "NM", "EN", 1, "24.50", ("published", "24.50", "24.00")),
-    ("Endurance", "MH2", "LP", "EN", 1, "11.00", ("sold", "11.00", "11.30")),
+    ("Solitude", "MH2", "EX", "EN", 1, "21.00", ("published", "21.00")),
+    ("Urza’s Saga", "MH2", "NM", "EN", 1, "24.50", ("published", "24.50")),
+    ("Endurance", "MH2", "LP", "EN", 1, "11.00", ("sold", "11.00")),
 ]
 
 # name, field, Ledger value, CardTrader value, numeric CardTrader value
@@ -215,9 +215,9 @@ def load_demo(owner):
         )
         items[name] = item
         if listing:
-            status, lprice, market = listing
+            status, lprice = listing
             Listing.objects.update_or_create(item=item, defaults={
-                "price": Decimal(lprice), "market_price": Decimal(market), "status": status,
+                "price": Decimal(lprice), "status": status,
                 "quantity": qty if name == "Sheoldred, the Apocalypse" else 1,
                 "sold_at": now if status == "sold" else None,
             })
@@ -276,9 +276,6 @@ class LedgerTestCase(TestCase):
         patcher = mock.patch.object(services, "make_client", side_effect=self.ct.client)
         patcher.start()
         self.addCleanup(patcher.stop)
-        pause = mock.patch.object(services, "MARKETPLACE_PAUSE", 0)
-        pause.start()
-        self.addCleanup(pause.stop)
 
     def publish(self):
         return self.client.post(reverse("ledger:api_publish"))
@@ -624,7 +621,7 @@ class PublishTest(LedgerTestCase):
         listing = Listing.objects.get(item__card__name="Counterspell")
         pid = listing.ct_product_id
         resp = self.client.put(reverse("ledger:api_listing", args=[listing.item.pk]), {
-            "quantity": 2, "price": "0.95", "market_price": "0.70", "status": "published",
+            "quantity": 2, "price": "0.95", "status": "published",
         }, content_type="application/json")
         self.assertEqual(resp.json()["messages"][0]["text"], "Listing for Counterspell saved.")
         self.publish()
@@ -701,30 +698,6 @@ class ProductSellingTest(LedgerTestCase):
         self.assertEqual(self.properties(self.mat), {})
         self.assertEqual(self.mat.status, Listing.Status.PUBLISHED)
 
-    def test_product_market_price_ignores_condition_and_foil(self):
-        self.ct.offers[1390] = [
-            {"price": {"cents": 7000, "currency": "EUR"}, "user": {"id": 77}, "properties_hash": {}},  # own
-            {"price": {"cents": 8500, "currency": "EUR"}, "user": {"id": 2}, "properties_hash": {"mtg_language": "en"}},
-            {"price": {"cents": 9900, "currency": "EUR"}, "user": {"id": 3}, "properties_hash": {}},
-        ]
-        self.client.post(reverse("ledger:api_match_prices"))
-        self.box.refresh_from_db()
-        self.assertEqual(self.box.market_price, Decimal("85.00"))
-        [(_, params)] = [c for c in self.ct.call_params if c[1].get("blueprint_id") == "1390"]
-        self.assertNotIn("foil", params)
-        self.assertEqual(params["language"], "en")
-
-    def test_playmat_market_price_without_language(self):
-        self.ct.offers[1391] = [
-            {"price": {"cents": 1500, "currency": "EUR"}, "user": {"id": 2}, "properties_hash": {}},
-        ]
-        self.client.post(reverse("ledger:api_match_prices"))
-        self.mat.refresh_from_db()
-        self.assertEqual(self.mat.market_price, Decimal("15.00"))
-        [(_, params)] = [c for c in self.ct.call_params if c[1].get("blueprint_id") == "1391"]
-        self.assertNotIn("language", params)
-        self.assertNotIn("foil", params)
-
     def test_order_of_product_is_imported(self):
         self.publish()
         self.box.refresh_from_db()
@@ -749,7 +722,7 @@ class SaleApiTest(LedgerTestCase):
         self.assertEqual(data["status"], "")
         row = next(r for r in data["results"] if r["name"] == "Counterspell")
         self.assertEqual(set(row), {"item_id", "name", "set_code", "condition", "language", "foil", "quantity",
-                                    "price", "market_price", "badge"})
+                                    "price", "badge"})
         sold = self.client.get(reverse("ledger:api_listings"), {"status": "sold"}).json()
         self.assertEqual(sold["status"], "sold")
         self.assertEqual({r["badge"]["label"] for r in sold["results"]}, {"Sold"})
@@ -758,20 +731,20 @@ class SaleApiTest(LedgerTestCase):
         self.publish()
         listing = self.listing()
         self.assertEqual(listing.status, Listing.Status.PUBLISHED)
-        self.put(listing.item_id, quantity=listing.quantity, price="0.99", market_price="", status="published")
+        self.put(listing.item_id, quantity=listing.quantity, price="0.99", status="published")
         listing.refresh_from_db()
         self.assertEqual((listing.price, listing.status), (Decimal("0.99"), Listing.Status.TO_PUBLISH))
 
     def test_mark_sold_sets_sold_at(self):
         listing = self.listing()
-        self.put(listing.item_id, quantity=1, price="1.00", market_price="", status="sold")
+        self.put(listing.item_id, quantity=1, price="1.00", status="sold")
         listing.refresh_from_db()
         self.assertIsNotNone(listing.sold_at)
 
     def test_quantity_over_owned(self):
         listing = self.listing()
         owned = listing.item.quantity
-        resp = self.put(listing.item_id, quantity=owned + 1, price="1.00", market_price="", status="to_publish")
+        resp = self.put(listing.item_id, quantity=owned + 1, price="1.00", status="to_publish")
         self.assertEqual(resp.status_code, 400)
         copies = "copy" if owned == 1 else "copies"
         self.assertEqual(resp.json(), {"quantity": [f"You only own {owned} {copies}."]})
@@ -782,29 +755,10 @@ class SaleApiTest(LedgerTestCase):
         self.assertEqual(data["item"]["name"], item.card.name)
         self.assertEqual(data["item"]["quantity"], item.quantity)
         self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": f"{item.price:.2f}",
-                                           "market_price": None, "status": "to_publish"})
-        resp = self.put(item.pk, quantity=1, price="2.00", market_price="", status="to_publish")
+                                           "status": "to_publish"})
+        resp = self.put(item.pk, quantity=1, price="2.00", status="to_publish")
         self.assertEqual(resp.json()["messages"][0]["text"], f"Listing for {item.card.name} saved.")
         self.assertTrue(self.client.get(reverse("ledger:api_listing", args=[item.pk])).json()["listing"]["exists"])
-
-    def test_match_prices_message(self):
-        resp = self.client.post(reverse("ledger:api_match_prices"))
-        self.assertRegex(resp.json()["messages"][0]["text"], r"^\d+ prices matched to market\.$")
-        resp = self.client.post(reverse("ledger:api_match_prices"))
-        self.assertEqual(resp.json()["messages"][0]["text"], "All prices already match the market.")
-
-
-class MarketTest(LedgerTestCase):
-    def test_match_market_prices_uses_same_condition_and_ignores_own_offers(self):
-        self.client.post(reverse("ledger:api_match_prices"))
-        solitude = Listing.objects.get(item__card__name="Solitude")  # EX -> Slightly Played
-        self.assertEqual(solitude.market_price, Decimal("22.40"))
-        self.assertEqual(solitude.price, Decimal("22.40"))
-        self.assertEqual(solitude.status, Listing.Status.TO_PUBLISH)
-        ragavan = Listing.objects.get(item__card__name="Ragavan, Nimble Pilferer")  # NM: no other NM offer
-        self.assertEqual(ragavan.market_price, Decimal("20.00"))
-        sold = Listing.objects.get(item__card__name="Endurance")
-        self.assertEqual(sold.price, Decimal("11.00"))
 
 
 class SyncTest(LedgerTestCase):
@@ -1016,7 +970,7 @@ class SellingIsolationTest(LedgerTestCase):
         self.client.force_login(self.other)
         self.ct.calls.clear()
         for name, args in (("api_publish", []), ("api_sync_run", []), ("api_orders_import", []),
-                           ("api_match_prices", []), ("api_order_ship", [order.pk])):
+                           ("api_order_ship", [order.pk])):
             with self.subTest(name=name):
                 resp = self.client.post(reverse(f"ledger:{name}", args=args), {"tracking_code": "X"},
                                         content_type="application/json")

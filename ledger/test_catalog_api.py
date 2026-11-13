@@ -81,7 +81,7 @@ class ListingSuggestionTest(LedgerTestCase):
     def test_suggestion_does_not_change_saved_price(self):
         Listing.objects.filter(item=self.item).delete()
         self.suggestion()
-        r = self.client.put(self.url, {"quantity": 1, "price": "3.00", "market_price": "", "status": "to_publish"},
+        r = self.client.put(self.url, {"quantity": 1, "price": "3.00", "status": "to_publish"},
                             content_type="application/json")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(Listing.objects.get(item=self.item).price, Decimal("3.00"))

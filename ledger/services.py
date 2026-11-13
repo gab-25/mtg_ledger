@@ -2,14 +2,13 @@
 
 import csv
 import io
-import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -427,65 +426,6 @@ def remove_listing(listing):
                     raise
         _log(f"{CARDTRADER}: listing for {listing.item.card.name} removed", owner=owner)
     listing.delete()
-
-
-def _market_price(products, condition, my_user_id):
-    """Cheapest offer of someone else, preferring the same condition (condition None: any offer)."""
-    others = [p for p in products if (p.get("user") or {}).get("id") != my_user_id]
-    same = [p for p in others if condition and (p.get("properties_hash") or {}).get("condition") == condition]
-    pool = same or others
-    prices = [money(p.get("price")) for p in pool if p.get("price")]
-    return min(prices) if prices else None
-
-
-MARKETPLACE_PAUSE = 0.11  # marketplace endpoint: max 10 requests per second
-
-
-def refresh_market_prices(client, listings):
-    """Update market_price from the cheapest comparable offer on CardTrader."""
-    my_user_id = (client.info() or {}).get("user_id")
-    blueprints = _blueprints(listings)
-    updated = 0
-    for listing in listings:
-        item = listing.item
-        if not item.card.ct_blueprint_id:
-            continue
-        if item.card.is_product:  # no foil nor condition; a language only when CardTrader takes one
-            blueprint = blueprints.get(item.card.ct_blueprint_id)
-            language = LANGUAGE_TO_CT[item.language] if _accepts(blueprint, "mtg_language") else None
-            products = client.marketplace_products(item.card.ct_blueprint_id, language=language)
-            price = _market_price(products, None, my_user_id)
-        else:
-            products = client.marketplace_products(
-                item.card.ct_blueprint_id, language=LANGUAGE_TO_CT[item.language], foil=item.foil
-            )
-            price = _market_price(products, CONDITION_TO_CT[item.condition], my_user_id)
-        if price is not None and price != listing.market_price:
-            listing.market_price = price
-            listing.save(update_fields=["market_price", "updated_at"])
-            updated += 1
-        time.sleep(MARKETPLACE_PAUSE)
-    return updated
-
-
-def match_market_prices(user):
-    """Refresh the market prices of the user's listings from CardTrader, then align active listings to them."""
-    active = Listing.objects.owned_by(user).exclude(status=Listing.Status.SOLD).select_related("item__card")
-    with user_client(user) as client:
-        resolve_blueprints(client, {l.item.card for l in active})
-        refresh_market_prices(client, list(active))
-    with transaction.atomic():
-        changed = (
-            Listing.objects.owned_by(user).exclude(status=Listing.Status.SOLD)
-            .exclude(market_price__isnull=True)
-            .exclude(price=F("market_price"))
-        )
-        count = changed.update(
-            price=F("market_price"), status=Listing.Status.TO_PUBLISH, updated_at=timezone.now()
-        )
-        if count:
-            _log(f"{count} listing prices matched to market", owner=user)
-    return count
 
 
 # --- Orders / shipments ----------------------------------------------------

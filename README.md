@@ -106,7 +106,6 @@ superuser's profile; otherwise connect the token from the profile after upgradin
   only the properties CardTrader takes for them (a language, when it has one).
 - **Sync all**: imports sale orders (removing sold copies from the Ledger following CardTrader's CardTrader Zero
   rules), then compares published listings with your CardTrader inventory and opens conflicts.
-- **Match market prices**: reads the cheapest offer from other sellers for the same condition/language/foil.
 - **Shipments**: orders to ship with packing number, address, printable packing list, tracking code and
   "Mark as shipped".
 
@@ -124,8 +123,8 @@ printing. It uses the administrator's CardTrader token (Profile and settings).
 
 - **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
   how many copies you own and the Cardmarket prices.
-- **Listing form**: the Cardmarket trend (foil trend for foil copies) is suggested next to the CardTrader market
-  price; "Use" copies it into the price field.
+- **Listing form**: the Cardmarket trend (foil trend for foil copies) is shown and prefills the price of a new
+  listing.
 
 The sync runs on a Celery worker (Redis broker). `sync_catalog` only queues it; schedule it every night after
 03:00 (Cardmarket regenerates the price guide around 02:45 CET) with the scheduler of your choice.

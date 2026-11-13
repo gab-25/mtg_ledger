@@ -140,7 +140,6 @@ class Listing(models.Model):
     item = models.OneToOneField(CollectionItem, on_delete=models.CASCADE, related_name="listing")
     quantity = models.PositiveIntegerField(default=1)
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    market_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.TO_PUBLISH)
     ct_product_id = models.PositiveBigIntegerField("CardTrader product", null=True, blank=True, unique=True)
     sold_at = models.DateTimeField(null=True, blank=True)

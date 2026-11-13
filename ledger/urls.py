@@ -17,7 +17,6 @@ urlpatterns = [
     path("api/collection/export/", collection_api.export_csv, name="api_export"),
     path("api/listings/", sale_api.listings, name="api_listings"),
     path("api/listings/publish/", sale_api.publish, name="api_publish"),
-    path("api/listings/match-prices/", sale_api.match_prices, name="api_match_prices"),
     path("api/listings/<int:item_pk>/", sale_api.listing, name="api_listing"),
     path("api/catalog/", catalog_api.catalog, name="api_catalog"),
     path("api/catalog/categories/", catalog_api.categories, name="api_catalog_categories"),
