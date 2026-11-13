@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from . import services
 from .cardtrader import CardTraderClient, CardTraderError, money
-from .models import Blueprint, Card, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, CardmarketPrice, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 LANGUAGE_PROP = {"name": "mtg_language", "type": "string", "default_value": "en", "possible_values": ["en", "it"]}
@@ -341,7 +341,7 @@ def load_dmu(test):
 
 
 def add(test, blueprint, **fields):
-    body = {"blueprint": blueprint, "condition": "NM", "language": "EN", "quantity": 1, "price": "10.00", **fields}
+    body = {"blueprint": blueprint, "condition": "NM", "language": "EN", "quantity": 1, **fields}
     return test.client.post(reverse("ledger:api_collection"), body, content_type="application/json")
 
 
@@ -370,14 +370,14 @@ class ItemTest(LedgerTestCase):
         self.assertEqual(item.language, "EN")
 
     def test_add_same_stack_merges(self):
-        first = add(self, 1390, quantity=1, price="10.00")
-        second = add(self, 1390, quantity=2, price="99.00")
+        first = add(self, 1390, quantity=1)
+        second = add(self, 1390, quantity=2)
         self.assertEqual((first.status_code, second.status_code), (201, 200))
         self.assertEqual(second.json()["id"], first.json()["id"])
         self.assertEqual(second.json()["messages"][0]["text"],
                          "Added 2× Dominaria United Draft Booster Box to the copies you already had.")
         item = CollectionItem.objects.get(pk=first.json()["id"])
-        self.assertEqual((item.quantity, item.price), (3, Decimal("10.00")))
+        self.assertEqual(item.quantity, 3)
 
     def test_add_with_existing_duplicate_stacks_merges_into_the_oldest(self):
         first = CollectionItem.objects.get(pk=add(self, 1390, quantity=1).json()["id"])
@@ -390,7 +390,7 @@ class ItemTest(LedgerTestCase):
         self.assertEqual((first.quantity, twin.quantity), (3, 4))
 
     def test_add_product_without_language_field(self):
-        resp = self.client.post(reverse("ledger:api_collection"), {"blueprint": 1391, "quantity": 1, "price": "5.00"},
+        resp = self.client.post(reverse("ledger:api_collection"), {"blueprint": 1391, "quantity": 1},
                                 content_type="application/json")
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(CollectionItem.objects.get(pk=resp.json()["id"]).language, "EN")
@@ -415,7 +415,7 @@ class ItemTest(LedgerTestCase):
         item = CollectionItem.objects.get(pk=add(self, 1301).json()["id"])
         url = reverse("ledger:api_item", args=[item.pk])
         resp = self.client.put(url, {"name": "X", "condition": "LP", "language": "IT", "foil": True,
-                                     "quantity": 5, "price": "7.00"}, content_type="application/json")
+                                     "quantity": 5}, content_type="application/json")
         self.assertEqual(resp.status_code, 200)
         item.refresh_from_db()
         self.assertEqual((item.condition, item.quantity, item.card.name), ("LP", 5, "Sheoldred, the Apocalypse"))
@@ -423,7 +423,7 @@ class ItemTest(LedgerTestCase):
     def test_edit_product_keeps_nm_non_foil(self):
         item = CollectionItem.objects.get(pk=add(self, 1390).json()["id"])
         url = reverse("ledger:api_item", args=[item.pk])
-        self.client.put(url, {"condition": "PL", "language": "EN", "foil": True, "quantity": 1, "price": "1.00"},
+        self.client.put(url, {"condition": "PL", "language": "EN", "foil": True, "quantity": 1},
                         content_type="application/json")
         item.refresh_from_db()
         self.assertEqual((item.condition, item.foil), ("NM", False))
@@ -462,6 +462,83 @@ class ItemTest(LedgerTestCase):
         resp = self.client.delete(url)
         self.assertEqual(resp.json()["messages"][0]["text"], "Removed Thoughtseize from the collection.")
         self.assertFalse(CollectionItem.objects.filter(pk=item.pk).exists())
+
+
+class TrendPriceTest(LedgerTestCase):
+    """The collection price is the Cardmarket trend of the stack's printing, computed on read."""
+
+    def setUp(self):
+        super().setUp()
+        load_dmu(self)
+        self.client.force_login(self.other)  # an empty collection: only what each test adds
+
+    def guide(self, blueprint, trend, trend_foil, id_product=None):
+        id_product = id_product or 900000 + blueprint
+        CardmarketPrice.objects.create(id_product=id_product, trend=trend, trend_foil=trend_foil)
+        Blueprint.objects.filter(ct_id=blueprint).update(cm_price_id=id_product)
+
+    def collection(self):
+        return self.client.get(reverse("ledger:api_collection")).json()
+
+    def prices(self):
+        return {(r["name"], r["foil"]): r["price"] for r in self.collection()["results"]}
+
+    def test_row_price_is_trend(self):
+        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+        add(self, 1301)
+        add(self, 1301, foil=True)
+        prices = self.prices()
+        self.assertEqual(prices[("Sheoldred, the Apocalypse", False)], "12.75")
+        self.assertEqual(prices[("Sheoldred, the Apocalypse", True)], "14.34")
+
+    def test_foil_without_foil_trend_has_no_price(self):
+        self.guide(1301, Decimal("1.46"), Decimal("0.00"))
+        add(self, 1301, foil=True)
+        self.assertIsNone(self.prices()[("Sheoldred, the Apocalypse", True)])
+
+    def test_product_uses_trend_even_if_foil(self):
+        self.guide(1390, Decimal("150.00"), Decimal("0.00"))
+        item_id = add(self, 1390).json()["id"]
+        CollectionItem.objects.filter(pk=item_id).update(foil=True)  # an old row
+        self.assertEqual(self.prices()[("Dominaria United Draft Booster Box", True)], "150.00")
+
+    def test_unlinked_card_has_no_price(self):
+        card = Card.objects.create(name="Loose Card", set_code="ZZZ")
+        CollectionItem.objects.create(owner=self.other, card=card, quantity=1)
+        self.assertIsNone(self.prices()[("Loose Card", False)])
+
+    def test_value_sums_trend_times_quantity(self):
+        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+        add(self, 1301, quantity=2)
+        add(self, 1301, foil=True)
+        CollectionItem.objects.create(owner=self.other, card=Card.objects.create(name="Loose", set_code="ZZZ"),
+                                      quantity=5)
+        self.assertEqual(self.collection()["stats"]["value"], "39.84")
+
+    def test_value_without_any_trend_is_null(self):
+        add(self, 1301)
+        self.assertIsNone(self.collection()["stats"]["value"])
+
+    def test_add_ignores_price_in_body(self):
+        resp = add(self, 1301, price="abc")
+        self.assertEqual(resp.status_code, 201)
+
+    def test_new_listing_starts_from_trend(self):
+        self.guide(1301, Decimal("3.20"), Decimal("4.00"))
+        item_id = add(self, 1301).json()["id"]
+        data = self.client.get(reverse("ledger:api_listing", args=[item_id])).json()
+        self.assertEqual(data["listing"]["price"], "3.20")
+
+    def test_new_listing_without_trend_has_no_price(self):
+        item_id = add(self, 1301).json()["id"]
+        resp = self.client.get(reverse("ledger:api_listing", args=[item_id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()["listing"]["price"])
+
+    def test_item_detail_price_is_trend(self):
+        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+        item_id = add(self, 1301).json()["id"]
+        self.assertEqual(self.client.get(reverse("ledger:api_item", args=[item_id])).json()["price"], "12.75")
 
 
 class CsvTest(LedgerTestCase):
@@ -682,7 +759,7 @@ class ProductSellingTest(LedgerTestCase):
         self.mat = self.listed(1391)
 
     def listed(self, blueprint):
-        item = CollectionItem.objects.get(pk=add(self, blueprint, quantity=2, price="90.00").json()["id"])
+        item = CollectionItem.objects.get(pk=add(self, blueprint, quantity=2).json()["id"])
         return Listing.objects.create(item=item, quantity=1, price=Decimal("90.00"))
 
     def properties(self, listing):
@@ -754,7 +831,7 @@ class SaleApiTest(LedgerTestCase):
         data = self.client.get(reverse("ledger:api_listing", args=[item.pk])).json()
         self.assertEqual(data["item"]["name"], item.card.name)
         self.assertEqual(data["item"]["quantity"], item.quantity)
-        self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": f"{item.price:.2f}",
+        self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": data["cm_suggestion"],
                                            "status": "to_publish"})
         resp = self.put(item.pk, quantity=1, price="2.00", status="to_publish")
         self.assertEqual(resp.json()["messages"][0]["text"], f"Listing for {item.card.name} saved.")

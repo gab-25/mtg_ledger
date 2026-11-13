@@ -1,7 +1,10 @@
 """The collection API (/api/collection/): list with filters and stats, add from the catalog, edit/remove copies,
 CSV import and export."""
 
-from django.db.models import DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum
+from decimal import Decimal
+
+from django.db.models import Case, DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum, Value, When
+from django.db.models.functions import NullIf
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -18,7 +21,7 @@ from ..presentation import item_badge
 from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
-VALUE = ExpressionWrapper(F("price") * F("quantity"), output_field=DecimalField())
+VALUE = ExpressionWrapper(F("trend") * F("quantity"), output_field=DecimalField())
 CATALOG_ITEM = form_body("CatalogItem", CatalogItemForm)
 ITEM = form_body("Item", ItemForm)
 
@@ -28,10 +31,25 @@ def _blueprint_value(field):
     return Subquery(Blueprint.objects.filter(ct_id=OuterRef("card__ct_blueprint_id")).values(field)[:1])
 
 
+def trend_price():
+    """The Cardmarket trend of the item's printing (trend_foil for a foil card), None when unknown or 0.00."""
+    trend = Case(
+        When(foil=True, card__is_product=False, then=_blueprint_value("cm_price__trend_foil")),
+        default=_blueprint_value("cm_price__trend"),
+        output_field=DecimalField(max_digits=10, decimal_places=2),
+    )
+    return NullIf(trend, Value(Decimal("0.00")))
+
+
+def _price(item):
+    return f"{item.trend:.2f}" if item.trend is not None else None
+
+
 def _with_blueprint(items):
     return items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
                           category_name=_blueprint_value("category__name"),
-                          image_url=_blueprint_value("image_url"))
+                          image_url=_blueprint_value("image_url"),
+                          trend=trend_price())
 
 
 def _category(value):
@@ -70,7 +88,7 @@ def _row(item):
         "condition_label": item.get_condition_display(),
         "language": item.language,
         "quantity": item.quantity,
-        "price": f"{item.price:.2f}",
+        "price": _price(item),
         "badge": item_badge(item.status),
     }
 
@@ -169,7 +187,7 @@ def item(request, pk):
         "language": obj.language,
         "foil": obj.foil,
         "quantity": obj.quantity,
-        "price": f"{obj.price:.2f}",
+        "price": _price(obj),
         "has_listing": hasattr(obj, "listing"),
     })
 

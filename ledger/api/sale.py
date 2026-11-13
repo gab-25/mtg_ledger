@@ -77,7 +77,7 @@ def listing(request, item_pk):
             raise ServiceError(f"Listing not removed: {exc}")
         return messages_response(msg("success", "Listing removed."))
 
-    obj = existing or Listing(item=item, price=item.price, quantity=1)
+    obj = existing or Listing(item=item, price=cardmarket.suggested_price(item.card, item.foil), quantity=1)
     if request.method == "PUT":
         old_status = obj.status
         form = ListingForm(request.data, instance=obj)
