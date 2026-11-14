@@ -412,7 +412,6 @@ class ScanSession(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     expansion = models.ForeignKey(Expansion, null=True, blank=True, on_delete=models.SET_NULL)
     default_condition = models.CharField(max_length=2, choices=Condition.choices, default=Condition.NEAR_MINT)
-    sale_threshold = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=5, choices=Status.choices, default=Status.OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -436,8 +435,6 @@ class ScanLine(models.Model):
     foil = models.BooleanField(default=False)
     condition = models.CharField(max_length=2, choices=Condition.choices)
     quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    for_sale = models.BooleanField(null=True, blank=True, help_text="Empty: follow the session threshold")
     needs_confirmation = models.BooleanField(default=False)
     candidates = models.JSONField(default=list, blank=True, help_text="Blueprint ct_ids to choose from")
     read_name = models.CharField(max_length=200, blank=True, help_text="The card name the model read")
@@ -452,15 +449,6 @@ class ScanLine(models.Model):
 
     def __str__(self):
         return f"{self.quantity}× {self.blueprint or 'unconfirmed card'}"
-
-    @property
-    def listed(self):
-        if self.price is None:
-            return False
-        if self.for_sale is not None:
-            return self.for_sale
-        threshold = self.session.sale_threshold
-        return threshold is not None and self.price > threshold
 
 
 class ScanCapture(models.Model):
