@@ -21,6 +21,7 @@ class SyncTest(CardmarketTestCase):
         rag = Blueprint.objects.get(ct_id=1001)
         self.assertEqual((rag.name, rag.expansion.code, rag.collector_number), ("Ragavan, Nimble Pilferer", "mh2", "138"))
         self.assertEqual((rag.cm_price_id, rag.image_url), (555001, "https://img/1001.jpg"))
+        self.assertEqual(rag.image_large_url, "https://cardtrader.com/uploads/show_1001.jpg")
         self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 10, 2))
 
     def test_sync_stores_categories_and_properties(self):

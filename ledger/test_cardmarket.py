@@ -52,6 +52,7 @@ class CardmarketTestCase(TestCase):
             for bp in expansion:
                 bp["card_market_ids"] = CM_IDS.get(bp["id"], [])
                 bp["image_url"] = f"https://img/{bp['id']}.jpg"
+                bp["image"] = {"url": f"/uploads/{bp['id']}.jpg", "show": {"url": f"/uploads/show_{bp['id']}.jpg"}}
         self.guide = FakeGuide()
         self.cm = self.guide.client()
         self.addCleanup(self.cm.close)

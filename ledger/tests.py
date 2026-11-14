@@ -440,13 +440,16 @@ class ItemTest(LedgerTestCase):
         self.assertIsNone(next(r for r in everything["results"] if r["name"] == "The One Ring")["category_id"])
 
     def test_collection_rows_carry_blueprint_image(self):
-        Blueprint.objects.filter(ct_id=1390).update(image_url="https://img/1390.jpg")
+        Blueprint.objects.filter(ct_id=1390).update(image_url="https://img/1390.jpg",
+                                                    image_large_url="https://img/show_1390.jpg")
         add(self, 1390)
         Card.objects.create(name="Loose Card", set_code="ZZZ")  # no blueprint
         CollectionItem.objects.create(owner=self.user, card=Card.objects.get(name="Loose Card"), quantity=1)
         rows = {r["name"]: r for r in self.client.get(reverse("ledger:api_collection")).json()["results"]}
         self.assertEqual(rows["Dominaria United Draft Booster Box"]["image_url"], "https://img/1390.jpg")
+        self.assertEqual(rows["Dominaria United Draft Booster Box"]["image_large_url"], "https://img/show_1390.jpg")
         self.assertEqual(rows["Loose Card"]["image_url"], "")
+        self.assertEqual(rows["Loose Card"]["image_large_url"], "")
 
     def test_edit_and_delete_item(self):
         item = CollectionItem.objects.filter(owner=self.user, card__name="Thoughtseize").first()

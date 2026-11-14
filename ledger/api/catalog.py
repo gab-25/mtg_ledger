@@ -74,6 +74,7 @@ def catalog(request):
             "name": bp.name,
             "version": bp.version,
             "image_url": bp.image_url,
+            "image_large_url": bp.image_large_url,
             "expansion_code": bp.expansion.code,
             "expansion_name": bp.expansion.name,
             "collector_number": bp.collector_number,

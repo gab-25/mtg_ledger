@@ -355,6 +355,9 @@ class Blueprint(models.Model):
     version = models.CharField(max_length=80, blank=True)
     rarity = models.CharField(max_length=40, blank=True)
     image_url = models.URLField(max_length=500, blank=True)
+    image_large_url = models.URLField(
+        max_length=500, blank=True, help_text="CardTrader's large image (488×680); image_url is its thumbnail",
+    )
     category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL, related_name="blueprints")
     editable_properties = models.JSONField(
         null=True, blank=True, help_text="Names of the properties CardTrader accepts when selling it; empty if unknown",
