@@ -19,6 +19,7 @@ from ..presentation import item_badge
 from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
+PRICE_FETCH_TIMEOUT = 5.0  # seconds: the price fetch runs inside the add request
 VALUE = ExpressionWrapper(F("market_price") * F("quantity"), output_field=DecimalField())
 CATALOG_ITEM = form_body("CatalogItem", CatalogItemForm)
 ITEM = form_body("Item", ItemForm)
@@ -41,9 +42,9 @@ def _with_blueprint(items):
 
 
 def _fetch_price(item):
-    """Fetch the market price of an item just added from the catalog, if none is stored (best effort)."""
+    """Fetch the market price of an item just added or changed, if none is stored (best effort, short timeout)."""
     try:
-        with services.service_client() as client:
+        with services.service_client(timeout=PRICE_FETCH_TIMEOUT) as client:
             pricing.ensure(client, item)
     except CardTraderError:  # no service token: the nightly sync will price it once there is one
         pass
@@ -171,7 +172,7 @@ def item(request, pk):
         form = ItemForm(request.data, instance=obj)
         if not form.is_valid():
             raise form_errors(form)
-        form.save()
+        _fetch_price(form.save())
         return messages_response(msg("success", f"Saved {obj.card.name}."))
     card = obj.card
     return Response({

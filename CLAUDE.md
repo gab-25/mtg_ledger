@@ -59,7 +59,7 @@ There is no linter or formatter configured. Settings come only from the environm
   send foil (nor a language CardTrader does not take).
 - **Prices** (`ledger/pricing.py`): CardTrader only. `MarketPrice` keeps the cheapest offer per blueprint, language,
   foil and condition (last known, no expiry). The nightly sync refreshes every owned (blueprint, language, foil) with
-  one marketplace call each (`refresh_owned`); adding from the catalog fetches a missing one (`ensure`). A collection
+  one marketplace call each (`refresh_owned`); adding from the catalog or editing a copy fetches a missing one (`ensure`, short timeout); a product is one call whatever its languages. A collection
   item's price (and a new listing's starting price) is the exact-condition row, else none; products price as NM
   non-foil. The catalog has no prices; the scan doesn't price or list anything.
 - **Scan pipeline**: photo → `ledger/openrouter.py` (vision model reads the card) → `ledger/recognition.py` (matches

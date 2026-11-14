@@ -40,14 +40,15 @@ class CardTraderError(Exception):
 
 
 class CardTraderClient:
-    def __init__(self, token, *, base_url=BASE_URL, transport=None, timeout=30.0, sleep=time.sleep):
+    def __init__(self, token, *, base_url=BASE_URL, transport=None, timeout=30.0, read_timeout=180.0,
+                 sleep=time.sleep):
         if not token:
             raise CardTraderError("CardTrader API token is not configured.")
         self._http = httpx.Client(
             base_url=base_url,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             # products/export can take a while on large inventories (docs suggest 120-180s).
-            timeout=httpx.Timeout(timeout, read=180.0),
+            timeout=httpx.Timeout(timeout, read=read_timeout),
             transport=transport,
         )
         self._sleep = sleep

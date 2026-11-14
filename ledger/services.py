@@ -76,9 +76,14 @@ def service_account_user():
     return service.user if service else None
 
 
-def make_client(token):
-    """Build the API client (an empty token raises CardTraderError). Tests patch this to inject a mock transport."""
-    return CardTraderClient(token)
+def make_client(token, *, timeout=None):
+    """Build the API client (an empty token raises CardTraderError). Tests patch this to inject a mock transport.
+
+    timeout, in seconds, bounds every phase of a request (default: long reads, for large inventory exports).
+    """
+    if timeout is None:
+        return CardTraderClient(token)
+    return CardTraderClient(token, timeout=timeout, read_timeout=timeout)
 
 
 NO_SELLING_TOKEN = "Connect your CardTrader token in Profile and settings to sell."
@@ -92,8 +97,8 @@ def user_client(user):
     return make_client(token)
 
 
-def service_client():
-    return make_client(service_token())
+def service_client(*, timeout=None):
+    return make_client(service_token(), timeout=timeout)
 
 
 class TokenInUse(Exception):

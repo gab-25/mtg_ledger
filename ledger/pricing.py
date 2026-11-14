@@ -7,7 +7,7 @@ owns, and adding a card from the catalog fills a missing one.
 import logging
 import time
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Case, F, OuterRef, Q, Subquery, Value, When
 from django.utils import timezone
 
@@ -57,13 +57,23 @@ def refresh(client, blueprint_ct_id, language, foil, *, is_product=False):
     Returns the rows stored; raises CardTraderError.
     """
     if is_product:
-        offers = client.marketplace_products(blueprint_ct_id)
-        prices = [p for p in (money(o.get("price")) for o in offers) if p is not None]
-        best = {(language, False, PRODUCT_CONDITION): min(prices)} if prices else {}
-        foil = False
-    else:
-        offers = client.marketplace_products(blueprint_ct_id, language=LANGUAGE_TO_CT[language], foil=foil)
-        best = _cheapest(offers, language=language, foil=foil)
+        return refresh_product(client, blueprint_ct_id, [language])
+    offers = client.marketplace_products(blueprint_ct_id, language=LANGUAGE_TO_CT[language], foil=foil)
+    return _replace(blueprint_ct_id, language, foil, _cheapest(offers, language=language, foil=foil))
+
+
+def refresh_product(client, blueprint_ct_id, languages):
+    """One call for a product's cheapest offer, stored as NM non-foil under each of languages. Returns rows stored."""
+    offers = client.marketplace_products(blueprint_ct_id)
+    prices = [p for p in (money(o.get("price")) for o in offers) if p is not None]
+    return sum(
+        _replace(blueprint_ct_id, language, False,
+                 {(language, False, PRODUCT_CONDITION): min(prices)} if prices else {})
+        for language in languages
+    )
+
+
+def _replace(blueprint_ct_id, language, foil, best):
     with transaction.atomic():
         MarketPrice.objects.filter(blueprint_ct_id=blueprint_ct_id, language=language, foil=foil).delete()
         _store(blueprint_ct_id, best)
@@ -113,7 +123,10 @@ def ensure(client, item):
     try:
         refresh(client, bp, language, foil, is_product=item.card.is_product)
     except CardTraderError as exc:
-        SyncLog.objects.create(level=SyncLog.Level.WARNING, message=f"Market price unavailable: {exc}"[:300])
+        SyncLog.objects.create(owner=item.owner, level=SyncLog.Level.WARNING,
+                               message=f"Market price unavailable: {exc}"[:300])
+    except IntegrityError:  # a concurrent refresh (the nightly sync) stored this combination first
+        pass
 
 
 PAUSE = 0.06  # CardTrader allows 200 requests per 10 s across all endpoints
@@ -132,32 +145,45 @@ def owned_combinations():
     return sorted({(bp, lang, foil and not product, product) for bp, lang, foil, product in rows})
 
 
-def _refresh_retrying(client, combination):
-    bp, language, foil, is_product = combination
+def _retrying(call):
     try:
-        return refresh(client, bp, language, foil, is_product=is_product)
+        return call()
     except CardTraderError as exc:
         if exc.status != 429:
             raise
         time.sleep(RATE_LIMIT_WAIT)
-        return refresh(client, bp, language, foil, is_product=is_product)
+        return call()
+
+
+def _jobs():
+    """(call, combinations it refreshes) per CardTrader call: one per card combination, one per product blueprint."""
+    jobs, products = [], {}
+    for bp, language, foil, is_product in owned_combinations():
+        if is_product:
+            products.setdefault(bp, []).append(language)
+        else:
+            jobs.append(((lambda c, a=(bp, language, foil): refresh(c, *a)), 1))
+    for bp, languages in products.items():
+        jobs.append(((lambda c, bp=bp, langs=languages: refresh_product(c, bp, langs)), len(languages)))
+    return jobs
 
 
 def refresh_owned(client):
-    """Refresh the prices of every owned combination, one CardTrader call each. Returns (refreshed, failed).
+    """Refresh the prices of every owned combination. Returns (combinations refreshed, combinations failed).
 
-    A combination that fails, for any reason, is counted and skipped: the others are still refreshed.
+    One CardTrader call per card combination, and one per product blueprint whatever its languages. A call that
+    fails, for any reason, is counted and skipped: the others still run.
     """
     refreshed = failed = 0
-    for combination in owned_combinations():
+    for call, combinations in _jobs():
         try:
-            _refresh_retrying(client, combination)
+            _retrying(lambda: call(client))
         except CardTraderError:
-            failed += 1
+            failed += combinations
         except Exception:  # an unexpected payload: keep it out of the way of the other combinations
-            logger.exception("Market price refresh failed for %s", combination)
-            failed += 1
+            logger.exception("Market price refresh failed")
+            failed += combinations
         else:
-            refreshed += 1
+            refreshed += combinations
         time.sleep(PAUSE)
     return refreshed, failed

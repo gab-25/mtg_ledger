@@ -125,7 +125,8 @@ CardTrader token (Profile and settings).
   how many copies you own. It shows no prices.
 - **Collection**: the price of each copy is the cheapest CardTrader offer of its exact printing, language, finish and
   condition, as of the last refresh; a copy with no such offer shows "–". The estimated value is price × quantity. A
-  card added from the catalog gets its price right away; scanned or imported cards get it at the next nightly sync.
+  card added from the catalog or edited gets its price right away; scanned or imported cards get it at the next
+  nightly sync.
 - **Listing form**: that same price is shown and prefills the price of a new listing.
 
 The sync runs on a Celery worker (Redis broker). `sync_catalog` only queues it; schedule it every night with the

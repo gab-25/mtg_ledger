@@ -1,12 +1,14 @@
 from decimal import Decimal
 from unittest import mock
 
-from django.db import connection
+from django.contrib.auth import get_user_model
+from django.db import IntegrityError, connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import TransactionTestCase
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
 from . import pricing
+from .cardtrader import CardTraderError
 from .models import Card, CollectionItem, SyncLog
 from .tests import LedgerTestCase
 
@@ -163,3 +165,51 @@ class ClearOldPricesMigrationTest(TransactionTestCase):
         executor.migrate(self.AFTER)
         apps = executor.loader.project_state(self.AFTER).apps
         self.assertFalse(apps.get_model("ledger", "MarketPrice").objects.exists())
+
+
+class MinorFixesTest(TestCase):
+    def setUp(self):
+        from .tests import FakeCardTrader
+
+        User = get_user_model()
+        self.user = User.objects.create_user("owner")
+        self.ct = FakeCardTrader()
+        self.api = self.ct.client()
+        patcher = mock.patch.object(pricing, "PAUSE", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def own(self, ct_id, language="EN", product=False, **item):
+        card, _ = Card.objects.get_or_create(
+            ct_blueprint_id=ct_id, defaults={"name": "X", "set_code": "ZZZ", "collector_number": str(ct_id),
+                                             "is_product": product},
+        )
+        return CollectionItem.objects.create(owner=self.user, card=card, language=language, condition="NM",
+                                             quantity=1, **item)
+
+    def test_rate_limited_call_waits_and_retries(self):
+        self.own(1100)
+        with mock.patch.object(pricing, "refresh", side_effect=[CardTraderError("slow down", 429), 1]) as refresh, \
+                mock.patch.object(pricing.time, "sleep") as sleep:
+            self.assertEqual(pricing.refresh_owned(self.api), (1, 0))
+        self.assertEqual(refresh.call_count, 2)
+        sleep.assert_any_call(pricing.RATE_LIMIT_WAIT)
+
+    def test_ensure_warning_belongs_to_the_items_owner(self):
+        self.ct.fail_marketplace = True
+        pricing.ensure(self.api, self.own(1100))
+        log = SyncLog.objects.get(message__startswith="Market price unavailable")
+        self.assertEqual(log.owner, self.user)
+
+    def test_ensure_tolerates_a_concurrent_refresh(self):
+        with mock.patch.object(pricing, "refresh", side_effect=IntegrityError("duplicate key")):
+            pricing.ensure(self.api, self.own(1100))  # the other refresh stored it: no error
+
+    def test_product_in_several_languages_is_fetched_once(self):
+        self.own(1390, "EN", product=True)
+        self.own(1390, "IT", product=True)
+        self.ct.offers[1390] = [offer(4000), offer(3500)]
+        self.assertEqual(pricing.refresh_owned(self.api), (2, 0))
+        self.assertEqual(self.ct.calls.count(MARKET), 1)
+        self.assertEqual(pricing.price(1390, "EN", False, "NM"), Decimal("35.00"))
+        self.assertEqual(pricing.price(1390, "IT", False, "NM"), Decimal("35.00"))

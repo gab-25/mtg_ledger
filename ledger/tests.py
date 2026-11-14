@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from . import services
 from .cardtrader import CardTraderClient, CardTraderError, money
+from .api.collection import PRICE_FETCH_TIMEOUT
 from .models import Blueprint, Card, CollectionItem, MarketPrice, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
@@ -535,6 +536,22 @@ class MarketPriceTest(LedgerTestCase):
         resp = add(self, 1301)
         self.assertEqual(resp.status_code, 201)
         self.assertIsNone(self.prices()[("Sheoldred, the Apocalypse", False, "NM")])
+
+    def test_catalog_add_uses_a_short_timeout(self):
+        from . import services
+
+        add(self, 1301)
+        self.assertEqual(services.make_client.call_args.kwargs.get("timeout"), PRICE_FETCH_TIMEOUT)
+
+    def test_edit_fetches_the_new_combinations_price(self):
+        item_id = add(self, 1301).json()["id"]
+        self.ct.offers[1301] = [{"price": {"cents": 800, "currency": "EUR"}, "user": {"id": 2},
+                                 "properties_hash": {"condition": "Near Mint"}}]
+        url = reverse("ledger:api_item", args=[item_id])
+        data = self.client.get(url).json()
+        resp = self.client.put(url, {**data, "language": "IT"}, content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.client.get(url).json()["price"], "8.00")
 
     def test_new_listing_starts_from_market_price(self):
         self.market(1301, Decimal("3.20"))
