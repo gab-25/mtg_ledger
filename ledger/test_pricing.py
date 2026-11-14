@@ -1,6 +1,11 @@
 from decimal import Decimal
 from unittest import mock
 
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.test import TransactionTestCase
+from django.utils import timezone
+
 from . import pricing
 from .models import Card, CollectionItem, SyncLog
 from .tests import LedgerTestCase
@@ -106,3 +111,55 @@ class RefreshOwnedTest(PricingTest):
         self.item(1100)
         self.ct.fail_marketplace = True
         self.assertEqual(pricing.refresh_owned(self.api), (0, 1))
+
+
+class PricingRulesTest(PricingTest):
+    def test_one_broken_combination_does_not_stop_the_others(self):
+        CollectionItem.objects.all().delete()
+        self.item(1100)
+        self.item(1101)
+        self.ct.offers[1100] = "not a list of offers"  # an unexpected payload
+        self.ct.offers[1101] = [offer(300, "Near Mint")]
+        with mock.patch.object(pricing, "PAUSE", 0):
+            self.assertEqual(pricing.refresh_owned(self.api), (1, 1))
+        self.assertEqual(pricing.price(1101, "IT", False, "NM"), Decimal("3.00"))
+
+    def test_product_with_an_old_foil_row_prices_as_nm_non_foil(self):
+        card = Card.objects.create(name="Box", set_code="ZZZ", collector_number="CT1390", ct_blueprint_id=1390,
+                                   is_product=True)
+        item = CollectionItem.objects.create(owner=self.user, card=card, language="EN", foil=True, condition="EX",
+                                             quantity=1)
+        self.ct.offers[1390] = [offer(4000)]
+        pricing.ensure(self.api, item)
+        self.assertEqual(pricing.item_price(item), Decimal("40.00"))
+        annotated = pricing.with_price(CollectionItem.objects.filter(pk=item.pk)).get()
+        self.assertEqual(annotated.market_price, Decimal("40.00"))
+
+    def test_old_lookup_helpers_are_gone(self):
+        for name in ("price_for", "fill_expansion", "PRICE_TTL"):
+            self.assertFalse(hasattr(pricing, name), name)
+
+
+class ClearOldPricesMigrationTest(TransactionTestCase):
+    """0024 empties the price cache: its rows were written by the old rules (any condition, expansion calls)."""
+
+    BEFORE = [("ledger", "0023_blueprint_image_large_url")]
+    AFTER = [("ledger", "0024_remove_cardmarket")]
+
+    def tearDown(self):
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+    def test_market_prices_are_cleared(self):
+        executor = MigrationExecutor(connection)
+        executor.migrate(self.BEFORE)
+        apps = executor.loader.project_state(self.BEFORE).apps
+        apps.get_model("ledger", "MarketPrice").objects.create(
+            blueprint_ct_id=1, language="EN", foil=False, condition="NM", price=Decimal("1.00"), fetched_at=timezone.now(),
+        )
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(self.AFTER)
+        apps = executor.loader.project_state(self.AFTER).apps
+        self.assertFalse(apps.get_model("ledger", "MarketPrice").objects.exists())

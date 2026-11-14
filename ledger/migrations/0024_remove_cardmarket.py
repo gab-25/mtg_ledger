@@ -3,6 +3,12 @@
 from django.db import migrations
 
 
+def clear_market_prices(apps, schema_editor):
+    """The cached prices were written by the old rules (expansion calls, any-condition fallback, 6 h expiry):
+    the nightly sync and catalog adds refill them by the new ones."""
+    apps.get_model("ledger", "MarketPrice").objects.all().delete()
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,6 +16,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(clear_market_prices, migrations.RunPython.noop),
         migrations.RemoveField(
             model_name='blueprint',
             name='cm_price',
