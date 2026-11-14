@@ -23,6 +23,20 @@ class CatalogTest(LedgerTestCase):
         showcase = Blueprint.objects.get(ct_id=1101)
         self.assertEqual((showcase.collector_number, showcase.version), ("356", "showcase"))
 
+    def test_ensure_blueprints_stores_the_large_image(self):
+        self.ct.blueprints[11][0]["image"] = {
+            "url": "/uploads/blueprints/image/1101/1101-x.jpg",
+            "show": {"url": "/uploads/blueprints/image/1101/show_1101-x.jpg"},
+            "preview": {"url": "/uploads/blueprints/image/1101/preview_1101-x.jpg"},
+        }
+        client = self.ct.client()
+        catalog.sync_expansions(client)
+        catalog.ensure_blueprints(client, Expansion.objects.get(ct_id=11))
+        without, with_image = Blueprint.objects.filter(expansion__ct_id=11).order_by("ct_id")
+        self.assertEqual(with_image.image_large_url,
+                         "https://cardtrader.com/uploads/blueprints/image/1101/show_1101-x.jpg")
+        self.assertEqual(without.image_large_url, "")
+
     def test_expansion_by_code_case_insensitive(self):
         catalog.sync_expansions(self.ct.client())
         self.assertEqual(catalog.expansion_by_code("NEO").ct_id, 11)

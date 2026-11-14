@@ -49,6 +49,7 @@ def _with_blueprint(items):
     return items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
                           category_name=_blueprint_value("category__name"),
                           image_url=_blueprint_value("image_url"),
+                          image_large_url=_blueprint_value("image_large_url"),
                           trend=trend_price())
 
 
@@ -83,6 +84,7 @@ def _row(item):
         "category_id": item.category_ct_id,
         "category_name": item.category_name,
         "image_url": item.image_url or "",
+        "image_large_url": item.image_large_url or "",
         "foil": item.foil,
         "condition": item.condition,
         "condition_label": item.get_condition_display(),

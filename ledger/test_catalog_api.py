@@ -20,7 +20,7 @@ def catalog():
     CardmarketPrice.objects.create(id_product=466300, trend=Decimal("0.50"))
     ugin = Blueprint.objects.create(
         ct_id=9001, expansion=m21, name="Ugin, the Spirit Dragon", collector_number="1",
-        image_url="https://img/ugin.jpg", cm_price_id=466234,
+        image_url="https://img/ugin.jpg", image_large_url="https://img/show_ugin.jpg", cm_price_id=466234,
     )
     Blueprint.objects.create(ct_id=9007, expansion=m21, name="Basri Ket", collector_number="7", cm_price_id=466300)
     Blueprint.objects.create(ct_id=9045, expansion=dmr, name="Counterspell", collector_number="45")
@@ -123,6 +123,7 @@ class CatalogApiTest(LedgerTestCase):
         self.assertEqual(ugin["prices"], {"trend": "12.75", "low": "10.00", "avg": "12.50",
                                           "trend_foil": "14.34", "low_foil": None, "avg_foil": None})
         self.assertEqual(ugin["image_url"], "https://img/ugin.jpg")
+        self.assertEqual(ugin["image_large_url"], "https://img/show_ugin.jpg")
         self.assertIsNone(ugin["owned_qty"])
         self.assertIsNotNone(data["prices_date"])
 

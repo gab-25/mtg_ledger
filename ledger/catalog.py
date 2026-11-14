@@ -1,6 +1,9 @@
 """Local copy of the CardTrader catalog and printing lookup."""
 
 import re
+from urllib.parse import urljoin
+
+CARDTRADER_URL = "https://cardtrader.com"
 
 _NUMBER = re.compile(r"^0*(\d+)(.*)$")
 
@@ -90,6 +93,14 @@ def _editable_properties(bp):
     return [p["name"] for p in props if isinstance(p, dict) and p.get("name")]
 
 
+def _image_variant(bp, size):
+    """Absolute URL of a size of the blueprint's image ("show", "preview"…), "" when the export has none."""
+    image = bp.get("image")
+    variant = image.get(size) if isinstance(image, dict) else None
+    path = variant.get("url") if isinstance(variant, dict) else None
+    return urljoin(CARDTRADER_URL, path) if path else ""
+
+
 def _blueprint_fields(bp, categories):
     """Map a /blueprints/export entry to Blueprint fields; categories is category_pks() of the export."""
     fixed = bp.get("fixed_properties") or {}
@@ -100,6 +111,7 @@ def _blueprint_fields(bp, categories):
         "version": bp.get("version") or "",
         "rarity": fixed.get("mtg_rarity") or "",
         "image_url": (image or "")[:500],
+        "image_large_url": _image_variant(bp, "show")[:500],
         "cm_price_id": next(iter(bp.get("card_market_ids") or []), None),
         "category_id": categories.get(bp.get("category_id")),
         "editable_properties": _editable_properties(bp),

@@ -144,8 +144,8 @@ def sync(cm_client, ct_client):
                     ],
                     update_conflicts=True, unique_fields=["ct_id"],
                     update_fields=[
-                        "expansion", "name", "collector_number", "version", "rarity", "image_url", "cm_price",
-                        "category", "editable_properties",
+                        "expansion", "name", "collector_number", "version", "rarity", "image_url", "image_large_url",
+                        "cm_price", "category", "editable_properties",
                     ],
                 )
             refresh_product_flags(blueprints.keys())
