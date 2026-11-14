@@ -113,23 +113,24 @@ Client: `ledger/cardtrader.py` (endpoints from https://www.cardtrader.com/docs/a
 Condition mapping: M→Mint, NM→Near Mint, EX→Slightly Played, GD→Moderately Played, LP→Played,
 PL→Heavily Played, PO→Poor.
 
-## Card database and Cardmarket prices
+## Card database and market prices
 
 Every night the Ledger reloads its card database from CardTrader (every MTG expansion and every printing, i.e.
-blueprint) and Cardmarket's public price guide (low, trend, average and the 1/7/30-day averages, regular and foil).
-Each CardTrader blueprint carries its Cardmarket product id, which ties it to its price. Your cards are matched to a
-printing by their CardTrader blueprint, or else by set code + collector number; the sync logs how many cards have no
-printing. It uses the administrator's CardTrader token (Profile and settings).
+blueprint), then refreshes the market price of every card someone owns: the cheapest CardTrader offer for each
+printing, language and finish, per condition. Your cards are matched to a printing by their CardTrader blueprint, or
+else by set code + collector number; the sync logs how many cards have no printing. It uses the administrator's
+CardTrader token (Profile and settings).
 
 - **Cards** page: search the card database by name, set code or collector number (or only the cards you own) and see
-  how many copies you own and the Cardmarket prices.
-- **Collection**: the price of each copy is the Cardmarket trend of its printing (foil trend for foil copies),
-  computed on every page load, never typed; the estimated value is trend × quantity. Copies without a trend show "–".
-- **Listing form**: the Cardmarket trend (foil trend for foil copies) is shown and prefills the price of a new
-  listing.
+  how many copies you own. It shows no prices.
+- **Collection**: the price of each copy is the cheapest CardTrader offer of its exact printing, language, finish and
+  condition, as of the last refresh; a copy with no such offer shows "–". The estimated value is price × quantity. A
+  card added from the catalog gets its price right away; scanned or imported cards get it at the next nightly sync.
+- **Listing form**: that same price is shown and prefills the price of a new listing.
 
-The sync runs on a Celery worker (Redis broker). `sync_catalog` only queues it; schedule it every night after
-03:00 (Cardmarket regenerates the price guide around 02:45 CET) with the scheduler of your choice.
+The sync runs on a Celery worker (Redis broker). `sync_catalog` only queues it; schedule it every night with the
+scheduler of your choice. The price refresh makes one CardTrader call per owned printing, language and finish,
+paced under CardTrader's rate limit, so its length grows with the collections.
 
 ```bash
 docker compose up -d redis
@@ -147,9 +148,8 @@ With Docker Compose the `worker` and `redis` services start with the stack; queu
 condition, then frame one card at a time. **Auto-shoot** takes the photo by itself as soon as a card is in the box
 and in focus, and re-arms only once the box is empty again (the shutter button still works). The photo is
 recognised by a vision model on OpenRouter, matched against the local CardTrader catalog and added to a draft.
-Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged), lets you set a
-"list for sale above €X" threshold and saves everything at once (listed copies get the CardTrader market price; listings
-are created as *To publish*).
+Uncertain cards ask you to pick among candidates; **Review** shows the draft (duplicates merged) and saves everything
+into the collection at once. Putting cards up for sale is done afterwards, from the collection.
 
 - The scan screens are part of the React UI ([mtg_ledger_ui](https://github.com/gab-25/mtg_ledger_ui)), under
   `/scan/...`; they talk to the JSON API under `/api/scan/`. All the scan logic stays here.

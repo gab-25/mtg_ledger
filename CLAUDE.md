@@ -29,7 +29,7 @@ uv run python manage.py makemigrations --check --dry-run
 uv run python manage.py spectacular --validate --fail-on-warn --file /dev/null   # OpenAPI schema check
 
 docker compose up -d redis && uv run celery -A config worker --loglevel=info     # catalog sync worker
-uv run python manage.py sync_catalog             # queue the nightly catalog + price sync
+uv run python manage.py sync_catalog             # queue the nightly catalog + owned prices sync
 uv run python manage.py sync_catalog --set CODE  # reload one expansion now (no worker)
 ```
 
@@ -53,11 +53,15 @@ There is no linter or formatter configured. Settings come only from the environm
   `services.make_client`, which tests patch.
 - **Cards vs printings**: `Card` is the Ledger's own row (name + set + collector number) that `CollectionItem`
   points to; `Blueprint` is a product in the local copy of the CardTrader catalog (`ledger/catalog.py`, loaded lazily
-  or nightly by `ledger/catalog_sync.py`, which also ties blueprints to the Cardmarket prices of
-  `ledger/cardmarket.py`). The catalog holds every CardTrader MTG product: `Blueprint.category` (CardTrader category) tells cards (ids 1-3) from sealed products and
+  or nightly by `ledger/catalog_sync.py`). The catalog holds every CardTrader MTG product: `Blueprint.category` (CardTrader category) tells cards (ids 1-3) from sealed products and
   accessories (`is_product`), and `editable_properties` lists what CardTrader takes when selling it. Collection items
   are added only from the catalog (`catalog.card_for_blueprint`); products are stored Near Mint, non-foil, and never
-  send foil (nor a language CardTrader does not take). `ledger/pricing.py` caches CardTrader market prices.
+  send foil (nor a language CardTrader does not take).
+- **Prices** (`ledger/pricing.py`): CardTrader only. `MarketPrice` keeps the cheapest offer per blueprint, language,
+  foil and condition (last known, no expiry). The nightly sync refreshes every owned (blueprint, language, foil) with
+  one marketplace call each (`refresh_owned`); adding from the catalog fetches a missing one (`ensure`). A collection
+  item's price (and a new listing's starting price) is the exact-condition row, else none; products price as NM
+  non-foil. The catalog has no prices; the scan doesn't price or list anything.
 - **Scan pipeline**: photo → `ledger/openrouter.py` (vision model reads the card) → `ledger/recognition.py` (matches
   it to a `Blueprint`) → `ledger/scan.py` (draft lines of a `ScanSession`, saved into the collection at the end).
   The scan API (`ledger/api/scan.py`) is the only one with real DRF serializers (`ledger/api/serializers.py`).
