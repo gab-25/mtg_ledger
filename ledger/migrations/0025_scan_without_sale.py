@@ -6,7 +6,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ledger', '0023_remove_cardmarket'),
+        ('ledger', '0024_remove_cardmarket'),
     ]
 
     operations = [
