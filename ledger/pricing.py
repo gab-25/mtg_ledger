@@ -8,7 +8,7 @@ import time
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Min, OuterRef, Subquery
+from django.db.models import Case, F, Min, OuterRef, Q, Subquery, Value, When
 from django.utils import timezone
 
 from .cardtrader import CONDITION_FROM_CT, LANGUAGE_TO_CT, CardTraderError, money
@@ -78,23 +78,40 @@ def price(blueprint_ct_id, language, foil, condition):
     return row.price if row is not None else None
 
 
-def price_subquery(prefix=""):
-    """The stored price of a CollectionItem's exact combination, for annotating a CollectionItem queryset."""
-    return Subquery(MarketPrice.objects.filter(
-        blueprint_ct_id=OuterRef(f"{prefix}card__ct_blueprint_id"), language=OuterRef(f"{prefix}language"),
-        foil=OuterRef(f"{prefix}foil"), condition=OuterRef(f"{prefix}condition"),
-    ).values("price")[:1])
+def item_combination(item):
+    """(blueprint ct_id, language, foil, condition) whose price a collection item takes; products are NM non-foil."""
+    card = item.card
+    if card.is_product:
+        return card.ct_blueprint_id, item.language, False, PRODUCT_CONDITION
+    return card.ct_blueprint_id, item.language, item.foil, item.condition
+
+
+def item_price(item):
+    """The stored price of a collection item, or None."""
+    bp, language, foil, condition = item_combination(item)
+    return None if bp is None else price(bp, language, foil, condition)
+
+
+def with_price(items):
+    """A CollectionItem queryset annotated with market_price: the stored price of each item's combination."""
+    product = Q(card__is_product=True)
+    items = items.annotate(
+        price_foil=Case(When(product, then=Value(False)), default=F("foil")),
+        price_condition=Case(When(product, then=Value(PRODUCT_CONDITION)), default=F("condition")),
+    )
+    return items.annotate(market_price=Subquery(MarketPrice.objects.filter(
+        blueprint_ct_id=OuterRef("card__ct_blueprint_id"), language=OuterRef("language"),
+        foil=OuterRef("price_foil"), condition=OuterRef("price_condition"),
+    ).values("price")[:1]))
 
 
 def ensure(client, item):
     """Fetch the prices of a collection item's combination if none are stored. Errors go to the SyncLog."""
-    card = item.card
-    if card.ct_blueprint_id is None or MarketPrice.objects.filter(
-        blueprint_ct_id=card.ct_blueprint_id, language=item.language, foil=item.foil and not card.is_product,
-    ).exists():
+    bp, language, foil, _ = item_combination(item)
+    if bp is None or MarketPrice.objects.filter(blueprint_ct_id=bp, language=language, foil=foil).exists():
         return
     try:
-        refresh(client, card.ct_blueprint_id, item.language, item.foil, is_product=card.is_product)
+        refresh(client, bp, language, foil, is_product=item.card.is_product)
     except CardTraderError as exc:
         SyncLog.objects.create(level=SyncLog.Level.WARNING, message=f"Market price unavailable: {exc}"[:300])
 

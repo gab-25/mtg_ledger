@@ -1,10 +1,7 @@
 """The collection API (/api/collection/): list with filters and stats, add from the catalog, edit/remove copies,
 CSV import and export."""
 
-from decimal import Decimal
-
-from django.db.models import Case, DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum, Value, When
-from django.db.models.functions import NullIf
+from django.db.models import DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -14,14 +11,15 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 
-from .. import services
+from .. import pricing, services
+from ..cardtrader import CardTraderError
 from ..forms import CatalogItemForm, CsvImportForm, ItemForm
 from ..models import Blueprint, Card, Category, CollectionItem, Condition, Language, Listing, SyncLog
 from ..presentation import item_badge
 from .common import PAGE, doc, form_body, form_errors, messages_response, msg, page_payload, query
 
 TAGS = ["collection"]
-VALUE = ExpressionWrapper(F("trend") * F("quantity"), output_field=DecimalField())
+VALUE = ExpressionWrapper(F("market_price") * F("quantity"), output_field=DecimalField())
 CATALOG_ITEM = form_body("CatalogItem", CatalogItemForm)
 ITEM = form_body("Item", ItemForm)
 
@@ -31,26 +29,24 @@ def _blueprint_value(field):
     return Subquery(Blueprint.objects.filter(ct_id=OuterRef("card__ct_blueprint_id")).values(field)[:1])
 
 
-def trend_price():
-    """The Cardmarket trend of the item's printing (trend_foil for a foil card), None when unknown or 0.00."""
-    trend = Case(
-        When(foil=True, card__is_product=False, then=_blueprint_value("cm_price__trend_foil")),
-        default=_blueprint_value("cm_price__trend"),
-        output_field=DecimalField(max_digits=10, decimal_places=2),
-    )
-    return NullIf(trend, Value(Decimal("0.00")))
-
-
 def _price(item):
-    return f"{item.trend:.2f}" if item.trend is not None else None
+    return f"{item.market_price:.2f}" if item.market_price is not None else None
 
 
 def _with_blueprint(items):
-    return items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
-                          category_name=_blueprint_value("category__name"),
-                          image_url=_blueprint_value("image_url"),
-                          image_large_url=_blueprint_value("image_large_url"),
-                          trend=trend_price())
+    return pricing.with_price(items.annotate(category_ct_id=_blueprint_value("category__ct_id"),
+                                             category_name=_blueprint_value("category__name"),
+                                             image_url=_blueprint_value("image_url"),
+                                             image_large_url=_blueprint_value("image_large_url")))
+
+
+def _fetch_price(item):
+    """Fetch the market price of an item just added from the catalog, if none is stored (best effort)."""
+    try:
+        with services.service_client() as client:
+            pricing.ensure(client, item)
+    except CardTraderError:  # no service token: the nightly sync will price it once there is one
+        pass
 
 
 def _category(value):
@@ -153,6 +149,7 @@ def collection(request):
     if not form.is_valid():
         raise form_errors(form)
     item, merged = form.save()
+    _fetch_price(item)
     added = form.cleaned_data["quantity"]
     if merged:
         return messages_response(msg("success", f"Added {added}× {item.card.name} to the copies you already had."),

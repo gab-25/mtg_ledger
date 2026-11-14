@@ -1,4 +1,3 @@
-from decimal import Decimal
 from io import StringIO
 from unittest import mock
 
@@ -6,13 +5,33 @@ import httpx
 from django.core.management import call_command
 from django.test import TestCase
 
-from . import catalog_sync, services
-from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, SyncLog
-from .test_cardmarket import CardmarketTestCase
+from . import catalog_sync, pricing, services
+from .models import Blueprint, Card, Category, CollectionItem, Expansion, MarketPrice, SyncLog
 from .tests import FakeCardTrader
 
 
-class SyncTest(CardmarketTestCase):
+class SyncTestCase(TestCase):
+    def setUp(self):
+        self.ct = FakeCardTrader()
+        for expansion in self.ct.blueprints.values():
+            for bp in expansion:
+                bp["image_url"] = f"https://img/{bp['id']}.jpg"
+                bp["image"] = {"url": f"/uploads/{bp['id']}.jpg", "show": {"url": f"/uploads/show_{bp['id']}.jpg"}}
+        for target, attr, value in (
+            (services, "make_client", mock.Mock(side_effect=self.ct.client)),
+            (catalog_sync, "BLUEPRINT_PAUSE", 0),
+            (pricing, "PAUSE", 0),
+        ):
+            patcher = mock.patch.object(target, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def sync(self):
+        with self.ct.client() as ct:
+            return catalog_sync.sync(ct)
+
+
+class SyncTest(SyncTestCase):
     def test_sync_loads_every_mtg_expansion_and_blueprint(self):
         result = self.sync()
         self.assertEqual(set(Expansion.objects.values_list("code", flat=True)), {"mh2", "neo", "dmr", "dmu"})
@@ -20,9 +39,9 @@ class SyncTest(CardmarketTestCase):
         self.assertFalse(Expansion.objects.filter(blueprints_synced_at__isnull=True).exists())
         rag = Blueprint.objects.get(ct_id=1001)
         self.assertEqual((rag.name, rag.expansion.code, rag.collector_number), ("Ragavan, Nimble Pilferer", "mh2", "138"))
-        self.assertEqual((rag.cm_price_id, rag.image_url), (555001, "https://img/1001.jpg"))
+        self.assertEqual(rag.image_url, "https://img/1001.jpg")
         self.assertEqual(rag.image_large_url, "https://cardtrader.com/uploads/show_1001.jpg")
-        self.assertEqual((result.expansions, result.blueprints, result.priced), (4, 10, 2))
+        self.assertEqual((result.expansions, result.blueprints), (4, 10))
 
     def test_sync_stores_categories_and_properties(self):
         self.sync()
@@ -47,42 +66,18 @@ class SyncTest(CardmarketTestCase):
         card = Card.objects.create(name="Token", set_code="SLD", collector_number="10-013T/012-019T")
         self.assertEqual(Card.objects.get(pk=card.pk).collector_number, "10-013T/012-019T")
 
-    def test_first_cardmarket_id_is_used(self):
+    def test_sync_twice_no_duplicates(self):
         self.sync()
-        self.assertEqual(Blueprint.objects.get(ct_id=1201).cm_price_id, 555201)
-
-    def test_blueprint_without_cardmarket_id_has_no_price(self):
-        self.sync()
-        self.assertIsNone(Blueprint.objects.get(ct_id=1002).cm_price_id)
-
-    def test_prices_stored(self):
-        self.sync()
-        p = CardmarketPrice.objects.get(pk=555001)
-        self.assertEqual((p.trend, p.trend_foil, p.low_foil), (Decimal("42.00"), Decimal("61.25"), None))
-        self.assertEqual((p.low, p.avg, p.avg30_foil), (Decimal("35.00"), Decimal("40.50"), Decimal("62.00")))
-        self.assertEqual(p.prices_date.isoformat(), "2026-11-07T01:45:31+00:00")
-
-    def test_sync_twice_no_duplicates_prices_overwritten(self):
-        self.sync()
-        self.guide.guide["priceGuides"][0]["trend"] = 50.0
         self.ct.blueprints[10][0]["name"] = "Ragavan (renamed)"
         self.sync()
         self.assertEqual(Blueprint.objects.count(), 10)
-        self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("50.00"))
         self.assertEqual(Blueprint.objects.get(ct_id=1001).name, "Ragavan (renamed)")
 
     def test_sync_written_in_batches(self):
         with mock.patch.object(catalog_sync, "BATCH", 3):
             result = self.sync()
-        self.assertEqual((Blueprint.objects.count(), result.blueprints, result.priced), (10, 10, 2))
-        self.assertEqual(CardmarketPrice.objects.count(), 3)
+        self.assertEqual((Blueprint.objects.count(), result.blueprints), (10, 10))
         self.assertEqual(Blueprint.objects.get(ct_id=1390).category.ct_id, 4)
-        self.assertEqual(CardmarketPrice.objects.get(pk=555201).trend, Decimal("1.20"))
-
-    def test_duplicate_guide_rows_do_not_break_sync(self):
-        self.guide.guide["priceGuides"].append(dict(self.guide.guide["priceGuides"][0]))
-        self.sync()
-        self.assertEqual(CardmarketPrice.objects.filter(pk=555001).count(), 1)
 
     def test_failed_expansion_skipped_and_reported(self):
         self.ct.fail_export = {11}
@@ -92,36 +87,21 @@ class SyncTest(CardmarketTestCase):
         self.assertTrue(Blueprint.objects.filter(ct_id=1001).exists())
         self.assertIsNone(Expansion.objects.get(code="neo").blueprints_synced_at)
 
-    def test_guide_failure_changes_nothing_and_logs_warning(self):
-        CardmarketPrice.objects.create(id_product=555001, trend=Decimal("1.00"))
-        self.guide.fail = True
-        self.assertIsNone(catalog_sync.run_sync(self.cm))
-        self.assertEqual(CardmarketPrice.objects.get(pk=555001).trend, Decimal("1.00"))
-        self.assertFalse(Blueprint.objects.exists())
-        log = SyncLog.objects.first()
-        self.assertEqual(log.level, SyncLog.Level.WARNING)
-        self.assertIn("Catalog sync failed", log.message)
-
-    def test_malformed_guide_changes_nothing(self):
-        self.guide.raw = b"not json"
-        self.assertIsNone(catalog_sync.run_sync(self.cm))
-        self.assertFalse(Blueprint.objects.exists())
-
     def test_cardtrader_expansions_failure_changes_nothing(self):
         with mock.patch.object(FakeCardTrader, "handler", lambda s, r: httpx.Response(500, json={})):
-            self.assertIsNone(catalog_sync.run_sync(self.cm))
-        self.assertFalse(CardmarketPrice.objects.exists())
+            self.assertIsNone(catalog_sync.run_sync())
+        self.assertFalse(Blueprint.objects.exists())
         self.assertIn("Catalog sync failed", SyncLog.objects.first().message)
 
     def test_missing_cardtrader_token_logs_warning(self):
         services.make_client.side_effect = services.CardTraderError("CardTrader API token is not configured.")
-        self.assertIsNone(catalog_sync.run_sync(self.cm))
+        self.assertIsNone(catalog_sync.run_sync())
         self.assertIn("token is not configured", SyncLog.objects.first().message)
 
     def test_unexpected_failure_is_logged_and_raised(self):
-        with mock.patch.object(CardmarketPrice.objects, "bulk_create", side_effect=RuntimeError("db down")):
+        with mock.patch.object(Category.objects, "bulk_create", side_effect=RuntimeError("db down")):
             with self.assertRaises(RuntimeError):
-                catalog_sync.run_sync(self.cm)
+                catalog_sync.run_sync()
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
         self.assertEqual(log.message, "Catalog sync failed: RuntimeError: db down")
@@ -130,17 +110,40 @@ class SyncTest(CardmarketTestCase):
         Card.objects.create(name="Counterspell", set_code="DMR", collector_number="45")
         Card.objects.create(name="Ragavan", set_code="MH2", collector_number="", ct_blueprint_id=1001)
         Card.objects.create(name="X", set_code="PLST", collector_number="9")
-        catalog_sync.run_sync(self.cm)
+        catalog_sync.run_sync()
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.OK)
         self.assertEqual(
             log.message,
-            "Catalog sync: 4 expansions, 10 printings, 2 priced (guide 2026-11-07), 2 cards linked, 1 not linked",
+            "Catalog sync: 4 expansions, 10 printings, 2 cards linked, 1 not linked; 0 prices refreshed",
         )
+
+    def owned(self, ct_id=1001, number="138", set_code="MH2"):
+        from django.contrib.auth import get_user_model
+
+        user = get_user_model().objects.create_user(f"u{ct_id}")
+        card = Card.objects.create(name="X", set_code=set_code, collector_number=number, ct_blueprint_id=ct_id)
+        return CollectionItem.objects.create(owner=user, card=card, condition="NM", language="IT", quantity=1)
+
+    def test_run_sync_refreshes_owned_prices(self):
+        self.owned()
+        catalog_sync.run_sync()
+        self.assertTrue(MarketPrice.objects.filter(blueprint_ct_id=1001).exists())
+        log = SyncLog.objects.first()
+        self.assertEqual(log.level, SyncLog.Level.OK)
+        self.assertTrue(log.message.endswith("; 1 prices refreshed"))
+
+    def test_run_sync_reports_failed_prices(self):
+        self.owned()
+        self.ct.fail_marketplace = True
+        self.assertIsNotNone(catalog_sync.run_sync())
+        log = SyncLog.objects.first()
+        self.assertEqual(log.level, SyncLog.Level.WARNING)
+        self.assertTrue(log.message.endswith("; 0 prices refreshed, 1 prices failed"))
 
     def test_run_sync_mentions_failed_expansions(self):
         self.ct.fail_export = {11, 13}
-        catalog_sync.run_sync(self.cm)
+        catalog_sync.run_sync()
         log = SyncLog.objects.first()
         self.assertEqual(log.level, SyncLog.Level.WARNING)
         self.assertIn("2 expansions not loaded (dmu, neo)", log.message)

@@ -1,24 +1,15 @@
-"""The catalog API (/api/catalog/): search every CardTrader product (cards, sealed, accessories) with Cardmarket
-prices and owned copies."""
+"""The catalog API (/api/catalog/): search every CardTrader product (cards, sealed, accessories) with the owned
+copies."""
 
-from django.db.models import Max
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .. import cardmarket
-from ..catalog import normalize_number
-from ..models import Blueprint, CardmarketPrice, Category
+from ..catalog import normalize_number, owned_quantities
+from ..models import Blueprint, Category
 from ..search import search_blueprints
 from .common import PAGE, doc, page_payload, query
 
 TAGS = ["catalog"]
-PRICE_FIELDS = ("trend", "low", "avg", "trend_foil", "low_foil", "avg_foil")
-
-
-def _money(value):
-    return None if value is None else f"{value:.2f}"
-
-
 def _category(value):
     try:
         return int(value)
@@ -48,8 +39,8 @@ def catalog(request):
     filters = {"q": q, "set": set_code, "number": number, "category": category, "owned": owned}
     searched = bool(q or set_code or number or category is not None or owned)
 
-    owned_qty = cardmarket.owned_quantities(request.user)
-    printings = Blueprint.objects.select_related("expansion", "cm_price", "category")
+    owned_qty = owned_quantities(request.user)
+    printings = Blueprint.objects.select_related("expansion", "category")
     if searched:
         printings = printings.order_by("name", "expansion__code")
     else:
@@ -68,7 +59,6 @@ def catalog(request):
         printings = search_blueprints(printings, q)  # orders by relevance
 
     def printing(bp):
-        price = bp.cm_price
         return {
             "ct_id": bp.ct_id,
             "name": bp.name,
@@ -83,14 +73,12 @@ def catalog(request):
             "is_product": bp.is_product,
             "accepts_language": bp.accepts("mtg_language"),
             "owned_qty": owned_qty.get(bp.ct_id),
-            "prices": None if price is None else {f: _money(getattr(price, f)) for f in PRICE_FIELDS},
         }
 
     return Response({
         "searched": searched,
         "filters": filters,
         **page_payload(request, printings, printing),
-        "prices_date": CardmarketPrice.objects.aggregate(d=Max("prices_date"))["d"],
     })
 
 

@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from . import services
 from .cardtrader import CardTraderClient, CardTraderError, money
-from .models import Blueprint, Card, CardmarketPrice, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, CollectionItem, MarketPrice, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 LANGUAGE_PROP = {"name": "mtg_language", "type": "string", "default_value": "en", "possible_values": ["en", "it"]}
@@ -466,60 +466,65 @@ class ItemTest(LedgerTestCase):
         self.assertFalse(CollectionItem.objects.filter(pk=item.pk).exists())
 
 
-class TrendPriceTest(LedgerTestCase):
-    """The collection price is the Cardmarket trend of the stack's printing, computed on read."""
+class MarketPriceTest(LedgerTestCase):
+    """The collection price is the cheapest CardTrader offer of the stack's exact printing, language, foil and
+    condition, read from the stored market prices."""
 
     def setUp(self):
         super().setUp()
         load_dmu(self)
         self.client.force_login(self.other)  # an empty collection: only what each test adds
+        self.ct.offers = {1301: [], 1390: []}  # adding from the catalog fetches nothing unless a test says so
 
-    def guide(self, blueprint, trend, trend_foil, id_product=None):
-        id_product = id_product or 900000 + blueprint
-        CardmarketPrice.objects.create(id_product=id_product, trend=trend, trend_foil=trend_foil)
-        Blueprint.objects.filter(ct_id=blueprint).update(cm_price_id=id_product)
+    def market(self, blueprint, price, language="EN", foil=False, condition="NM"):
+        MarketPrice.objects.update_or_create(
+            blueprint_ct_id=blueprint, language=language, foil=foil, condition=condition,
+            defaults={"price": price, "fetched_at": timezone.now()},
+        )
 
     def collection(self):
         return self.client.get(reverse("ledger:api_collection")).json()
 
     def prices(self):
-        return {(r["name"], r["foil"]): r["price"] for r in self.collection()["results"]}
+        return {(r["name"], r["foil"], r["condition"]): r["price"] for r in self.collection()["results"]}
 
-    def test_row_price_is_trend(self):
-        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+    def test_row_price_is_exact_condition(self):
+        self.market(1301, Decimal("12.75"))
+        self.market(1301, Decimal("9.00"), condition="EX")
         add(self, 1301)
-        add(self, 1301, foil=True)
-        prices = self.prices()
-        self.assertEqual(prices[("Sheoldred, the Apocalypse", False)], "12.75")
-        self.assertEqual(prices[("Sheoldred, the Apocalypse", True)], "14.34")
+        self.assertEqual(self.prices()[("Sheoldred, the Apocalypse", False, "NM")], "12.75")
 
-    def test_foil_without_foil_trend_has_no_price(self):
-        self.guide(1301, Decimal("1.46"), Decimal("0.00"))
-        add(self, 1301, foil=True)
-        self.assertIsNone(self.prices()[("Sheoldred, the Apocalypse", True)])
+    def test_other_condition_only_is_no_price(self):
+        self.market(1301, Decimal("9.00"), condition="EX")
+        add(self, 1301)
+        self.assertIsNone(self.prices()[("Sheoldred, the Apocalypse", False, "NM")])
+        self.assertIsNone(self.collection()["stats"]["value"])
 
-    def test_product_uses_trend_even_if_foil(self):
-        self.guide(1390, Decimal("150.00"), Decimal("0.00"))
-        item_id = add(self, 1390).json()["id"]
-        CollectionItem.objects.filter(pk=item_id).update(foil=True)  # an old row
-        self.assertEqual(self.prices()[("Dominaria United Draft Booster Box", True)], "150.00")
+    def test_foil_and_language_must_match(self):
+        self.market(1301, Decimal("12.75"))
+        add(self, 1301, foil=True)
+        add(self, 1301, language="IT")
+        rows = {(r["foil"], r["language"]): r["price"] for r in self.collection()["results"]}
+        self.assertEqual(rows, {(True, "EN"): None, (False, "IT"): None})
+
+    def test_product_price_is_nm_non_foil(self):
+        self.market(1390, Decimal("150.00"))
+        add(self, 1390)
+        self.assertEqual(self.prices()[("Dominaria United Draft Booster Box", False, "NM")], "150.00")
 
     def test_unlinked_card_has_no_price(self):
         card = Card.objects.create(name="Loose Card", set_code="ZZZ")
         CollectionItem.objects.create(owner=self.other, card=card, quantity=1)
-        self.assertIsNone(self.prices()[("Loose Card", False)])
+        self.assertIsNone(self.prices()[("Loose Card", False, "NM")])
 
-    def test_value_sums_trend_times_quantity(self):
-        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+    def test_value_sums_price_times_quantity(self):
+        self.market(1301, Decimal("12.75"))
+        self.market(1301, Decimal("14.34"), foil=True)
         add(self, 1301, quantity=2)
         add(self, 1301, foil=True)
         CollectionItem.objects.create(owner=self.other, card=Card.objects.create(name="Loose", set_code="ZZZ"),
                                       quantity=5)
         self.assertEqual(self.collection()["stats"]["value"], "39.84")
-
-    def test_value_without_any_trend_is_null(self):
-        add(self, 1301)
-        self.assertIsNone(self.collection()["stats"]["value"])
 
     def test_collection_item_stores_no_price(self):
         self.assertNotIn("price", [f.name for f in CollectionItem._meta.get_fields()])
@@ -528,20 +533,36 @@ class TrendPriceTest(LedgerTestCase):
         resp = add(self, 1301, price="abc")
         self.assertEqual(resp.status_code, 201)
 
-    def test_new_listing_starts_from_trend(self):
-        self.guide(1301, Decimal("3.20"), Decimal("4.00"))
+    def test_catalog_add_fetches_missing_price(self):
+        self.ct.offers[1301] = [{"price": {"cents": 1100, "currency": "EUR"}, "user": {"id": 2},
+                                 "properties_hash": {"condition": "Near Mint"}}]
+        add(self, 1301)
+        add(self, 1301, condition="EX")  # same printing, language and foil: already fetched
+        self.assertEqual(self.ct.calls.count(("GET", "/marketplace/products")), 1)
+        self.assertEqual(self.prices()[("Sheoldred, the Apocalypse", False, "NM")], "11.00")
+
+    def test_catalog_add_works_when_cardtrader_down(self):
+        self.ct.fail_marketplace = True
+        resp = add(self, 1301)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(self.prices()[("Sheoldred, the Apocalypse", False, "NM")])
+
+    def test_new_listing_starts_from_market_price(self):
+        self.market(1301, Decimal("3.20"))
         item_id = add(self, 1301).json()["id"]
         data = self.client.get(reverse("ledger:api_listing", args=[item_id])).json()
-        self.assertEqual(data["listing"]["price"], "3.20")
+        self.assertEqual((data["listing"]["price"], data["suggested_price"]), ("3.20", "3.20"))
+        self.assertNotIn("cm_suggestion", data)
 
-    def test_new_listing_without_trend_has_no_price(self):
+    def test_new_listing_without_market_price_has_no_price(self):
         item_id = add(self, 1301).json()["id"]
         resp = self.client.get(reverse("ledger:api_listing", args=[item_id]))
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(resp.json()["listing"]["price"])
+        self.assertIsNone(resp.json()["suggested_price"])
 
-    def test_item_detail_price_is_trend(self):
-        self.guide(1301, Decimal("12.75"), Decimal("14.34"))
+    def test_item_detail_price_is_market_price(self):
+        self.market(1301, Decimal("12.75"))
         item_id = add(self, 1301).json()["id"]
         self.assertEqual(self.client.get(reverse("ledger:api_item", args=[item_id])).json()["price"], "12.75")
 
@@ -863,7 +884,7 @@ class SaleApiTest(LedgerTestCase):
         data = self.client.get(reverse("ledger:api_listing", args=[item.pk])).json()
         self.assertEqual(data["item"]["name"], item.card.name)
         self.assertEqual(data["item"]["quantity"], item.quantity)
-        self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": data["cm_suggestion"],
+        self.assertEqual(data["listing"], {"exists": False, "quantity": 1, "price": data["suggested_price"],
                                            "status": "to_publish"})
         resp = self.put(item.pk, quantity=1, price="2.00", status="to_publish")
         self.assertEqual(resp.json()["messages"][0]["text"], f"Listing for {item.card.name} saved.")

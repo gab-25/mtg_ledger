@@ -5,7 +5,7 @@ from ledger import catalog, services, tasks
 
 class Command(BaseCommand):
     help = (
-        "Queue the full catalog sync (CardTrader expansions, categories and blueprints, Cardmarket prices) on the "
+        "Queue the full catalog sync (CardTrader expansions, categories and blueprints, owned cards prices) on the "
         "Celery worker; with --set, reload the blueprints of one expansion right away instead."
     )
 

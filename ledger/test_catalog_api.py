@@ -5,24 +5,19 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import Blueprint, Card, CardmarketPrice, Category, CollectionItem, Expansion, Listing
+from .models import Blueprint, Category, CollectionItem, Expansion, Listing, MarketPrice
 from .tests import LedgerTestCase
 
 
 def catalog():
-    """A small local catalog: CardTrader printings with Cardmarket prices."""
+    """A small local catalog of CardTrader printings."""
     m21 = Expansion.objects.create(ct_id=500, code="m21", name="Core Set 2021")
     dmr = Expansion.objects.create(ct_id=501, code="dmr", name="Dominaria Remastered")
-    CardmarketPrice.objects.create(
-        id_product=466234, trend=Decimal("12.75"), low=Decimal("10.00"), avg=Decimal("12.50"),
-        trend_foil=Decimal("14.34"), prices_date=timezone.now(),
-    )
-    CardmarketPrice.objects.create(id_product=466300, trend=Decimal("0.50"))
     ugin = Blueprint.objects.create(
         ct_id=9001, expansion=m21, name="Ugin, the Spirit Dragon", collector_number="1",
-        image_url="https://img/ugin.jpg", image_large_url="https://img/show_ugin.jpg", cm_price_id=466234,
+        image_url="https://img/ugin.jpg", image_large_url="https://img/show_ugin.jpg",
     )
-    Blueprint.objects.create(ct_id=9007, expansion=m21, name="Basri Ket", collector_number="7", cm_price_id=466300)
+    Blueprint.objects.create(ct_id=9007, expansion=m21, name="Basri Ket", collector_number="7")
     Blueprint.objects.create(ct_id=9045, expansion=dmr, name="Counterspell", collector_number="45")
     single = Category.objects.create(ct_id=1, name="Magic Single Card")
     boxes = Category.objects.create(ct_id=4, name="Booster Boxes")
@@ -46,30 +41,20 @@ class ListingSuggestionTest(LedgerTestCase):
         self.url = reverse("ledger:api_listing", args=[self.item.pk])
 
     def suggestion(self):
-        return self.client.get(self.url).json()["cm_suggestion"]
+        return self.client.get(self.url).json()["suggested_price"]
 
-    def test_shows_trend_for_non_foil_item(self):
-        self.item.foil = False
-        self.item.save()
+    def market(self, price, **combination):
+        item = self.item
+        fields = {"language": item.language, "foil": item.foil, "condition": item.condition, **combination}
+        MarketPrice.objects.create(blueprint_ct_id=9001, price=price, fetched_at=timezone.now(), **fields)
+
+    def test_shows_market_price_of_the_exact_combination(self):
+        self.market(Decimal("12.75"))
+        self.market(Decimal("1.00"), foil=not self.item.foil)
         self.assertEqual(self.suggestion(), "12.75")
 
-    def test_product_suggestion_uses_trend(self):
-        Blueprint.objects.filter(ct_id=9001).update(category=Category.objects.get(ct_id=4))
-        self.item.card.is_product = True
-        self.item.card.save()
-        self.item.foil = True  # a product is never foil, whatever the row says
-        self.item.save()
-        self.assertEqual(self.suggestion(), "12.75")
-
-    def test_shows_foil_trend_for_foil_item(self):
-        self.item.foil = True
-        self.item.save()
-        self.assertEqual(self.suggestion(), "14.34")
-
-    def test_foil_item_without_foil_trend_gets_no_suggestion(self):
-        CardmarketPrice.objects.filter(pk=466234).update(trend_foil=None)
-        self.item.foil = True
-        self.item.save()
+    def test_other_condition_only_gets_no_suggestion(self):
+        self.market(Decimal("12.75"), condition="PO" if self.item.condition != "PO" else "NM")
         self.assertIsNone(self.suggestion())
 
     def test_unknown_printing_shows_dash_and_no_button(self):
@@ -120,12 +105,11 @@ class CatalogApiTest(LedgerTestCase):
         self.assertEqual((ugin["name"], ugin["expansion_code"], ugin["collector_number"]),
                          ("Ugin, the Spirit Dragon", "m21", "1"))
         self.assertEqual(ugin["expansion_name"], "Core Set 2021")
-        self.assertEqual(ugin["prices"], {"trend": "12.75", "low": "10.00", "avg": "12.50",
-                                          "trend_foil": "14.34", "low_foil": None, "avg_foil": None})
+        self.assertNotIn("prices", ugin)
         self.assertEqual(ugin["image_url"], "https://img/ugin.jpg")
         self.assertEqual(ugin["image_large_url"], "https://img/show_ugin.jpg")
         self.assertIsNone(ugin["owned_qty"])
-        self.assertIsNotNone(data["prices_date"])
+        self.assertNotIn("prices_date", data)
 
     def test_search_box_matches_set_code(self):
         self.assertEqual(self.names(q="M21"), ["Basri Ket", "Ugin, the Spirit Dragon"])
@@ -165,10 +149,6 @@ class CatalogApiTest(LedgerTestCase):
         resp = self.client.get("/api/cards/", {"q": "Ugin"})
         self.assertNotEqual(resp.get("Content-Type"), "application/json")
 
-    def test_printing_without_price_shows_dashes(self):
-        [card] = self.search(q="counterspell")["results"]
-        self.assertIsNone(card["prices"])
-
     def test_owned_by_blueprint_link(self):
         self.own(3, ct_blueprint_id=9001)
         data = self.search(owned="1")
@@ -198,7 +178,6 @@ class CatalogApiTest(LedgerTestCase):
             ("m21", "Basri Ket"), ("m21", "Ugin, the Spirit Dragon"),
         ])
         self.assertEqual((data["count"], data["page"], data["num_pages"]), (5, 1, 1))
-        self.assertIsNotNone(data["prices_date"])
 
     def test_latest_releases_rows_match_a_search(self):
         self.own(3, ct_blueprint_id=9001)

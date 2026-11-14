@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest import mock
 
 from . import pricing
 from .models import Card, CollectionItem, SyncLog
@@ -73,10 +74,35 @@ class PricingTest(LedgerTestCase):
         pricing.ensure(self.api, item)
         self.assertEqual(self.ct.calls.count(MARKET), 0)
 
-    def test_subquery_matches_exact_combination(self):
+    def test_with_price_matches_exact_combination(self):
         self.ct.offers[1100] = [offer(300, "Near Mint"), offer(150, "Slightly Played")]
         pricing.refresh(self.api, 1100, "IT", False)
         nm, gd = self.item(), self.item(condition="GD")
-        prices = dict(CollectionItem.objects.filter(pk__in=[nm.pk, gd.pk])
-                      .annotate(p=pricing.price_subquery()).values_list("pk", "p"))
+        prices = dict(pricing.with_price(CollectionItem.objects.filter(pk__in=[nm.pk, gd.pk]))
+                      .values_list("pk", "market_price"))
         self.assertEqual(prices, {nm.pk: Decimal("3.00"), gd.pk: None})
+
+
+class RefreshOwnedTest(PricingTest):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(pricing, "PAUSE", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        CollectionItem.objects.all().delete()
+
+    def test_refreshes_every_users_combinations(self):
+        mine = self.item(1100)
+        CollectionItem.objects.create(owner=self.other, card=mine.card, language="EN", foil=True,
+                                               condition="NM", quantity=1)
+        CollectionItem.objects.create(owner=self.other, card=mine.card, language="EN", foil=True,
+                                      condition="EX", quantity=1)  # same combination: one call
+        self.item(None)
+        self.assertEqual(pricing.owned_combinations(), [(1100, "EN", True, False), (1100, "IT", False, False)])
+        self.assertEqual(pricing.refresh_owned(self.api), (2, 0))
+        self.assertEqual(self.ct.calls.count(MARKET), 2)
+
+    def test_refresh_owned_counts_failures(self):
+        self.item(1100)
+        self.ct.fail_marketplace = True
+        self.assertEqual(pricing.refresh_owned(self.api), (0, 1))

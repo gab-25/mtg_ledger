@@ -1,20 +1,19 @@
-"""Nightly catalog sync: the card database from CardTrader and the prices from Cardmarket.
+"""Nightly catalog sync: the card database and the market prices of owned cards, from CardTrader.
 
 CardTrader is the master card database: every MTG expansion and every blueprint (printing) is reloaded from its
-API, then tied to Cardmarket's public daily price guide (ledger/cardmarket.py). The outcome goes to the SyncLog.
+API, then the cheapest offers of every combination someone owns are refreshed (ledger/pricing.py). The outcome goes
+to the SyncLog.
 """
 
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from itertools import batched
 
-from . import cardmarket, services
-from .cardmarket import PRICE_FIELDS, CardmarketError
+from . import pricing, services
 from .cardtrader import MTG_GAME_ID, CardTraderError
 from .catalog import _blueprint_fields, category_pks, normalize_number, refresh_product_flags
-from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, SyncLog
+from .models import Blueprint, Card, Category, Expansion, SyncLog
 
 BATCH = 2000
 BLUEPRINT_PAUSE = 0.06  # CardTrader allows 200 requests per 10 s across all endpoints
@@ -31,11 +30,11 @@ class CatalogSyncError(Exception):
 class SyncResult:
     expansions: int
     blueprints: int
-    priced: int
     linked: int
     unlinked: int
-    guide_date: datetime
     failed: list = field(default_factory=list)
+    prices_refreshed: int = 0
+    prices_failed: int = 0
 
 
 # --- download ----------------------------------------------------------------
@@ -105,15 +104,14 @@ def _count_links():
     return linked, unlinked
 
 
-def sync(cm_client, ct_client):
-    """Reload the card database from CardTrader and the prices from Cardmarket.
+def sync(ct_client):
+    """Reload the card database from CardTrader.
 
     Everything is downloaded before anything is written; an expansion whose blueprints fail keeps what it had.
     """
     from django.db import transaction
     from django.utils import timezone
 
-    prices, guide_date = cardmarket.fetch_guide(cm_client)
     expansions, blueprints, loaded, failed = _fetch_catalog(ct_client)
     try:
         categories = ct_client.categories() or []
@@ -145,47 +143,43 @@ def sync(cm_client, ct_client):
                     update_conflicts=True, unique_fields=["ct_id"],
                     update_fields=[
                         "expansion", "name", "collector_number", "version", "rarity", "image_url", "image_large_url",
-                        "cm_price", "category", "editable_properties",
+                        "category", "editable_properties",
                     ],
                 )
             refresh_product_flags(blueprints.keys())
             Expansion.objects.filter(ct_id__in=loaded).update(blueprints_synced_at=now)
-            for chunk in batched(prices.items(), BATCH):
-                CardmarketPrice.objects.bulk_create(
-                    [cardmarket.price_row(id_product, values, guide_date) for id_product, values in chunk],
-                    update_conflicts=True, unique_fields=["id_product"],
-                    update_fields=[*PRICE_FIELDS.values(), "prices_date"],
-                )
     except (KeyError, TypeError) as exc:  # unexpected CardTrader shape, raised before the transaction commits
         raise CatalogSyncError(f"CardTrader blueprints: {type(exc).__name__}: {exc}") from exc
     linked, unlinked = _count_links()
-    priced = sum(1 for _, fields in blueprints.values() if fields["cm_price_id"] in prices)
     return SyncResult(
-        expansions=len(expansions), blueprints=len(blueprints), priced=priced, linked=linked, unlinked=unlinked,
-        guide_date=guide_date, failed=failed,
+        expansions=len(expansions), blueprints=len(blueprints), linked=linked, unlinked=unlinked, failed=failed,
     )
 
 
 def _summary(result):
     message = (
-        f"Catalog sync: {result.expansions} expansions, {result.blueprints} printings, {result.priced} priced "
-        f"(guide {result.guide_date:%Y-%m-%d}), {result.linked} cards linked, {result.unlinked} not linked"
+        f"Catalog sync: {result.expansions} expansions, {result.blueprints} printings, "
+        f"{result.linked} cards linked, {result.unlinked} not linked; {result.prices_refreshed} prices refreshed"
     )
+    if result.prices_failed:
+        message += f", {result.prices_failed} prices failed"
     if result.failed:
         shown = ", ".join(result.failed[:10]) + (", …" if len(result.failed) > 10 else "")
         message += f"; {len(result.failed)} expansions not loaded ({shown})"
     return message
 
 
-def run_sync(cm_client=None):
-    """sync() with its outcome written to the SyncLog. Returns the result, or None when it could not run."""
-    own_cm = cm_client is None
-    cm_client = cm_client or cardmarket.make_client()
+def run_sync():
+    """sync() and the owned prices refresh, with the outcome written to the SyncLog.
+
+    Returns the result, or None when the catalog could not be synced.
+    """
     ct_client = None
     try:
         ct_client = services.service_client()
-        result = sync(cm_client, ct_client)
-    except (CatalogSyncError, CardmarketError, CardTraderError) as exc:
+        result = sync(ct_client)
+        result.prices_refreshed, result.prices_failed = pricing.refresh_owned(ct_client)
+    except (CatalogSyncError, CardTraderError) as exc:
         SyncLog.objects.create(message=f"Catalog sync failed: {exc}"[:300], level=SyncLog.Level.WARNING)
         return None
     except Exception as exc:
@@ -198,8 +192,6 @@ def run_sync(cm_client=None):
     finally:
         if ct_client is not None:
             ct_client.close()
-        if own_cm:
-            cm_client.close()
-    level = SyncLog.Level.WARNING if result.failed else SyncLog.Level.OK
+    level = SyncLog.Level.WARNING if result.failed or result.prices_failed else SyncLog.Level.OK
     SyncLog.objects.create(message=_summary(result)[:300], level=level)
     return result

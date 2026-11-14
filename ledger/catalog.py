@@ -112,7 +112,6 @@ def _blueprint_fields(bp, categories):
         "rarity": fixed.get("mtg_rarity") or "",
         "image_url": (image or "")[:500],
         "image_large_url": _image_variant(bp, "show")[:500],
-        "cm_price_id": next(iter(bp.get("card_market_ids") or []), None),
         "category_id": categories.get(bp.get("category_id")),
         "editable_properties": _editable_properties(bp),
     }
@@ -228,3 +227,29 @@ def expansion_by_code(code):
 
     code = (code or "").strip().lower()
     return Expansion.objects.filter(code=code).first() if code else None
+
+
+def owned_quantities(owner):
+    """{blueprint ct_id: copies in owner's collection}; cards without a blueprint link match by set + number."""
+    from django.db.models import Q, Sum
+
+    from .models import Blueprint, Card
+
+    per_card = list(
+        Card.objects.annotate(qty=Sum("items__quantity", filter=Q(items__owner=owner))).filter(qty__gt=0)
+        .values_list("ct_blueprint_id", "set_code", "collector_number", "qty")
+    )
+    known = set(Blueprint.objects.filter(ct_id__in=[c[0] for c in per_card if c[0]]).values_list("ct_id", flat=True))
+    wanted = {(s.lower(), normalize_number(n)) for bp, s, n, _ in per_card if bp not in known and normalize_number(n)}
+    by_printing = {}
+    if wanted:
+        rows = Blueprint.objects.filter(
+            expansion__code__in={s for s, _ in wanted}, collector_number__in={n for _, n in wanted}
+        ).order_by("-ct_id").values_list("expansion__code", "collector_number", "ct_id")
+        by_printing = {(s, n): ct_id for s, n, ct_id in rows}
+    owned = {}
+    for bp, s, n, qty in per_card:
+        ct_id = bp if bp in known else by_printing.get((s.lower(), normalize_number(n)))
+        if ct_id is not None:
+            owned[ct_id] = owned.get(ct_id, 0) + qty
+    return owned

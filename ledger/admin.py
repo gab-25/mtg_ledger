@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Blueprint, Card, CardmarketPrice, Category, Expansion, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
+from .models import Blueprint, Card, Category, Expansion, CollectionItem, Listing, Order, OrderItem, SyncConflict, SyncLog, SyncService
 
 
 @admin.register(Card)
@@ -79,9 +79,3 @@ class BlueprintAdmin(admin.ModelAdmin):
     list_filter = ["category"]
     search_fields = ["name", "expansion__code"]
     list_select_related = ["expansion", "category"]
-
-
-@admin.register(CardmarketPrice)
-class CardmarketPriceAdmin(admin.ModelAdmin):
-    list_display = ["id_product", "trend", "trend_foil", "low", "avg", "prices_date"]
-    search_fields = ["id_product"]
